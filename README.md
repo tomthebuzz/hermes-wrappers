@@ -67,15 +67,25 @@ team-portal/
 
 - Phase 1 (this skeleton): Kanban read view, tenant-scoped + rollup, create/
   claim/assign via CLI shellout, magic-link auth, `users.yaml` RBAC.
-- Phase 2: Artifact publish/review endpoints (approve/reject/comment),
-  wired against the same SLA deadline convention the cron sweep expects
-  (`SLA-DEADLINE: <iso8601>` marker — see sibling repo
-  `hermes-team-bots/cron/artifact-sla-sweep.py`).
-- Phase 3: no portal changes expected — that phase is the bot roster /
-  Telegram wiring, lives in the other repo.
+- Phase 2 (done): Artifact publish/review endpoints (approve/reject/
+  comment), review-queue listing with SLA countdown, shared SLA-deadline
+  convention with the sibling `hermes-team-bots` cron sweep via
+  `config/sla-defaults.yaml` + `config/tenants.yaml` (kept in sync by hand
+  across the two repos for now — see infra/README.md for the K8s-level fix
+  once both are deployed together). Minimal vanilla-JS static UI added at
+  `app/static/index.html` — Kanban view + Artifact review queue with
+  approve/reject/comment, no build step.
+- Phase 3: no portal changes — that phase is the bot roster / Telegram
+  wiring, lives entirely in the other repo.
 - Phase 4: swap `auth_backend: telegram_login_widget` in config once
   futuretree.com + BotFather /setdomain are live; point `KANBAN_DB_PATH` /
   `HERMES_BIN` env vars at the production host.
+
+## K8s deployment
+
+See `infra/README.md` — Kustomize base under `infra/base/`, with real
+unresolved decisions flagged there (kanban.db access pattern, image build,
+ingress timing) rather than silently assumed.
 
 ## Validation checklist (run on the real machine)
 

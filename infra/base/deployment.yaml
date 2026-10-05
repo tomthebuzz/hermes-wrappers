@@ -1,0 +1,96 @@
+# UNRESOLVED ARCHITECTURE DECISION — flagged since the Dockerfile TODO,
+# now surfaced here because it's a K8s volume question, not just a
+# container one. Three options, pick one before applying this in prod:
+#
+# Option A (what this manifest assumes below): Hermes itself ALSO runs in
+#   this cluster (e.g. as a StatefulSet with its own PVC for ~/.hermes),
+#   and this Deployment mounts that SAME PVC read-only for kanban.db, and
+#   execs into a sidecar container that has the `hermes` binary installed
+#   for the write paths (kanban_write.py shells out to `hermes kanban ...`).
+#   This is the cleanest long-term shape given "potentially hosted en
+#   suite with local models" — but requires a Hermes-in-cluster manifest
+#   this repo doesn't own (lives wherever the core Hermes deployment is
+#   defined — not scaffolded here, out of this repo's scope).
+#
+# Option B: Hermes stays on a single host (e.g. the Mac mini) outside the
+#   cluster, and this Deployment reaches it over the network via a thin
+#   HTTP shim (not built yet) instead of a shared filesystem. Swap the
+#   volumeMounts below for an env var pointing at that shim's URL, and
+#   change kanban_read.py / kanban_write.py accordingly.
+#
+# Option C (dev/staging only, NOT for prod): hostPath mount straight to
+#   the Hermes host's ~/.hermes if this Deployment is pinned to run on
+#   that exact node via nodeSelector/nodeAffinity. Fragile, single-node,
+#   fine for the Mac mini staging environment, not for a real cluster.
+#
+# This manifest assumes Option A's PVC shape (named hermes-home-pvc,
+# defined wherever the core Hermes deployment lives) so the names line up
+# once that decision is made — adjust the volume source if you pick B or C.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: team-portal
+  namespace: futuretree
+  labels:
+    app: team-portal
+spec:
+  replicas: 1   # see app/auth/magic_link.py — token store is in-process and
+                # single-instance only; raise replicas only after swapping
+                # that for a shared store (Redis) and the Login Widget auth.
+  selector:
+    matchLabels:
+      app: team-portal
+  template:
+    metadata:
+      labels:
+        app: team-portal
+    spec:
+      containers:
+        - name: team-portal
+          image: ghcr.io/tomthebuzz/team-portal:latest   # placeholder — build & push your own tag
+          ports:
+            - containerPort: 8080
+          env:
+            - name: KANBAN_DB_PATH
+              value: /hermes-home/kanban.db
+            - name: USERS_YAML_PATH
+              value: /config/users.yaml
+            - name: SHARED_CONFIG_DIR
+              value: /shared-config
+            - name: HERMES_BIN
+              value: hermes   # see Dockerfile TODO — needs to actually resolve in this container
+            - name: PORTAL_BASE_URL
+              value: "https://futuretree.com"   # Phase 4 — tailnet URL for now, see infra README
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: team-portal-session
+                  key: secret
+          volumeMounts:
+            - name: hermes-home
+              mountPath: /hermes-home
+              readOnly: true
+            - name: users-config
+              mountPath: /config
+              readOnly: true
+            - name: shared-config
+              mountPath: /shared-config
+              readOnly: true
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+      volumes:
+        - name: hermes-home
+          persistentVolumeClaim:
+            claimName: hermes-home-pvc   # defined by the core Hermes deployment — see header note (Option A)
+        - name: users-config
+          secret:
+            secretName: team-portal-users
+        - name: shared-config
+          configMap:
+            name: team-shared-config   # see kustomization.yaml's configMapGenerator

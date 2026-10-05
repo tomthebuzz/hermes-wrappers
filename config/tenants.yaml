@@ -1,0 +1,25 @@
+tenants:
+  tech:
+    label: "Tech"
+    telegram_group_chat_id: null
+    rollup: false
+  marketing:
+    label: "Marketing"
+    telegram_group_chat_id: null
+    rollup: false
+  sales:
+    label: "Sales"
+    telegram_group_chat_id: null
+    rollup: false
+  finance:
+    label: "Finance"
+    telegram_group_chat_id: null
+    rollup: false
+  ops:
+    label: "Ops"
+    telegram_group_chat_id: null
+    rollup: false
+  leadership:
+    label: "Leadership"
+    telegram_group_chat_id: null
+    rollup: true

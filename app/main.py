@@ -16,13 +16,14 @@ import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
 
-from . import kanban_read, kanban_write
+from . import config_loader, kanban_read, kanban_write
 from .auth.magic_link import MagicLinkAuth
-from .artifacts.sla import make_deadline_marker
+from .artifacts.sla import find_deadline, find_due_date, is_overdue, make_deadline_marker, seconds_remaining
 from .rbac import RBAC, UserScope
 
 # --- config (env-driven, container-friendly, no hardcoded host paths) ---
@@ -61,6 +62,9 @@ def healthz():
     return {"ok": True}
 
 
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+
+
 # --- auth ---
 
 class LoginRequest(BaseModel):
@@ -93,8 +97,11 @@ def login_verify(token: str):
 
 
 @app.get("/", response_class=HTMLResponse)
-def index(user: UserScope = Depends(require_user)):
-    return f"<h1>FutureTree Team Portal</h1><p>Signed in as {user.name} ({user.role})</p>"
+def index():
+    # Auth is enforced client-side by the SPA hitting /api/board and
+    # redirecting to the login screen on 401 — this route just serves the
+    # static shell. No session data is exposed here.
+    return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
 # --- kanban (read) ---
@@ -104,6 +111,10 @@ def board(user: UserScope = Depends(require_user)):
     all_tenants = kanban_read.distinct_tenants(KANBAN_DB_PATH)
     tenants = user.readable_tenants(all_tenants)
     tasks = kanban_read.list_tasks(KANBAN_DB_PATH, tenants=tenants)
+    for t in tasks:
+        due = find_due_date(t)
+        t["due_date"] = due
+        t["overdue"] = is_overdue(due) if due else False
     return {"tenants": tenants, "tasks": tasks}
 
 
@@ -116,6 +127,21 @@ def task_detail(task_id: str, user: UserScope = Depends(require_user)):
         raise HTTPException(status_code=403, detail="Not in your scope")
     task["comments"] = kanban_read.list_comments(KANBAN_DB_PATH, task_id)
     return task
+
+
+class CommentRequest(BaseModel):
+    text: str
+
+
+@app.post("/api/tasks/{task_id}/comments")
+def add_comment(task_id: str, body: CommentRequest, user: UserScope = Depends(require_user)):
+    task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
+    if task is None or not user.can_read_tenant(task.get("tenant", "")):
+        raise HTTPException(status_code=403, detail="Not in your scope")
+    result = kanban_write.comment_task(HERMES_BIN, task_id, body.text, author=user.name)
+    if not result.ok:
+        raise HTTPException(status_code=502, detail=result.stderr[:500])
+    return {"ok": True}
 
 
 # --- kanban (write) ---
@@ -148,11 +174,28 @@ def claim_task(task_id: str, user: UserScope = Depends(require_user)):
     return {"ok": True}
 
 
-# --- artifacts (Phase 2 surface, scaffolded now) ---
+# --- artifacts (Phase 2) ---
+
+@app.get("/api/artifacts")
+def artifact_review_queue(user: UserScope = Depends(require_user)):
+    """Review queue: tasks in 'review' status across whatever tenants this
+    user can read, enriched with the SLA deadline/overdue flag so the UI
+    can show a countdown without a second round-trip per card."""
+    all_tenants = kanban_read.distinct_tenants(KANBAN_DB_PATH)
+    tenants = user.readable_tenants(all_tenants)
+    tasks = kanban_read.list_tasks(KANBAN_DB_PATH, tenants=tenants, status="review")
+    for t in tasks:
+        t["comments"] = kanban_read.list_comments(KANBAN_DB_PATH, t["id"])
+        deadline = find_deadline(t)
+        t["sla_deadline"] = deadline
+        t["sla_seconds_remaining"] = seconds_remaining(deadline) if deadline else None
+        t["can_review"] = user.can_approve_tenant(t.get("tenant", ""))
+    return {"tasks": tasks}
+
 
 class PublishArtifactRequest(BaseModel):
     task_id: str
-    sla_hours: float = 48.0
+    sla_hours: float | None = None   # None -> use config_loader.default_sla_hours()
     summary: str = ""
 
 
@@ -161,12 +204,13 @@ def publish_artifact(body: PublishArtifactRequest, user: UserScope = Depends(req
     task = kanban_read.get_task(KANBAN_DB_PATH, body.task_id)
     if task is None or not user.can_read_tenant(task.get("tenant", "")):
         raise HTTPException(status_code=403, detail="Not in your scope")
-    marker = make_deadline_marker(body.sla_hours)
+    hours = body.sla_hours if body.sla_hours is not None else config_loader.default_sla_hours()
+    marker = make_deadline_marker(hours)
     kanban_write.comment_task(HERMES_BIN, body.task_id, marker)
     result = kanban_write.publish_artifact_for_review(HERMES_BIN, body.task_id, body.summary)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
-    return {"ok": True, "deadline_marker": marker}
+    return {"ok": True, "deadline_marker": marker, "sla_hours": hours}
 
 
 class ReviewDecisionRequest(BaseModel):

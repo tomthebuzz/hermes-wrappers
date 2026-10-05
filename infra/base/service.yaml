@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: team-portal
+  namespace: futuretree
+spec:
+  selector:
+    app: team-portal
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: ClusterIP

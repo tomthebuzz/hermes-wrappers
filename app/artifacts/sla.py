@@ -1,27 +1,62 @@
 """
-Shared SLA-deadline convention between the Team Portal (publish step) and
-the hermes-team-bots cron sweep (auto-resolve step). Keeping this logic in
-one small module and documenting the convention here so the two repos don't
-silently drift on the marker format.
-
-Convention: a structured line in the task body or a comment:
-    SLA-DEADLINE: 2026-10-07T12:00:00Z
-
-Default duration is 48h, overridable per-artifact at publish time (per
-spec). Default direction on miss (approve/reject) is a per-tenant setting —
-see DEFAULT_DIRECTION in hermes-team-bots/cron/artifact-sla-sweep.py. This
-module intentionally does NOT duplicate that dict; Phase 2 should move both
-into a shared config source (e.g. a small config.yaml both repos read) once
-the two repos are deployed together, rather than hand-syncing two Python
-dicts forever.
+Helpers for parsing the SLA-DEADLINE marker left on a task — shared
+convention with hermes-team-bots/cron/artifact-sla-sweep.py. See that
+file's docstring for the full convention.
 """
 from __future__ import annotations
 
 import datetime as dt
+import re
 
-DEFAULT_SLA_HOURS = 48
+SLA_DEADLINE_RE = re.compile(r"SLA-DEADLINE:\s*(\S+)")
+DUE_DATE_RE = re.compile(r"DUE-DATE:\s*(\S+)")
 
 
-def make_deadline_marker(hours: float = DEFAULT_SLA_HOURS) -> str:
+def make_deadline_marker(hours: float) -> str:
     deadline = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=hours)
     return f"SLA-DEADLINE: {deadline.isoformat().replace('+00:00', 'Z')}"
+
+
+def make_due_date_marker(due: dt.datetime) -> str:
+    return f"DUE-DATE: {due.isoformat().replace('+00:00', 'Z')}"
+
+
+def find_deadline(task: dict) -> str | None:
+    return _find_marker(task, SLA_DEADLINE_RE)
+
+
+def find_due_date(task: dict) -> str | None:
+    return _find_marker(task, DUE_DATE_RE)
+
+
+def _find_marker(task: dict, pattern: re.Pattern) -> str | None:
+    body = task.get("body") or ""
+    m = pattern.search(body)
+    if m:
+        return m.group(1)
+    for c in task.get("comments", []) or []:
+        m = pattern.search(c.get("text", ""))
+        if m:
+            return m.group(1)
+    return None
+
+
+def is_overdue(date_str: str, now: dt.datetime | None = None) -> bool:
+    """Pure soft check — used for the task 'turns red' visual flag. Never
+    triggers an automatic status change (that's only for artifacts, via
+    the cron sweep in the sibling hermes-team-bots repo)."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    try:
+        deadline = dt.datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return now >= deadline
+
+
+def seconds_remaining(deadline_str: str, now: dt.datetime | None = None) -> float | None:
+    now = now or dt.datetime.now(dt.timezone.utc)
+    try:
+        deadline = dt.datetime.fromisoformat(deadline_str.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (deadline - now).total_seconds()

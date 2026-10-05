@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: futuretree
+
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+  # - ingress.yaml   # Phase 4 only — see that file's header comment
+
+# Generates the team-shared-config ConfigMap from the actual YAML files in
+# config/, so there's exactly one source of truth instead of a hand-maintained
+# copy inside a manifest. Re-run `kustomize build` (or `kubectl apply -k`)
+# after editing config/*.yaml and it picks up the change automatically —
+# kustomize content-hashes the generated name, so a Deployment referencing
+# it by name needs `kubectl rollout restart` after a config change, or use
+# kustomize's auto-generated suffix + let the Deployment reference the
+# generated name directly (simplest: just re-apply, kustomize handles the
+# rename + Deployment update together when both are in the same kustomization).
+configMapGenerator:
+  - name: team-shared-config
+    namespace: futuretree
+    files:
+      - ../../config/tenants.yaml
+      - ../../config/sla-defaults.yaml
+
+secretGenerator:
+  - name: team-portal-session
+    namespace: futuretree
+    literals:
+      - secret=CHANGE-ME-generate-with-openssl-rand-hex-32

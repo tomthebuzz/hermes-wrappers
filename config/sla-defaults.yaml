@@ -1,0 +1,9 @@
+default_hours: 48
+
+on_miss_by_tenant:
+  tech: approve
+  marketing: approve
+  sales: approve
+  finance: reject
+  ops: approve
+  leadership: reject
