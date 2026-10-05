@@ -1,0 +1,51 @@
+# Example RBAC map for the Team Portal. Copy to users.yaml and fill in real
+# Telegram numeric user IDs (NOT @usernames — see @userinfobot).
+#
+# tenants: which kanban tenants this person can read/write in.
+# can_rollup: true means "ignore the tenant filter, show everything" —
+#   reserved for CEO/COO/CFO per the planning spec.
+# can_approve_artifacts: tenants where this person's approve/reject on an
+#   artifact review actually counts (vs. just commenting).
+
+users:
+  - telegram_user_id: 100000001
+    name: "Example CEO"
+    role: ceo
+    tenants: [leadership]
+    can_rollup: true
+    can_approve_artifacts: [leadership]
+
+  - telegram_user_id: 100000002
+    name: "Example COO"
+    role: coo
+    tenants: [ops, leadership]
+    can_rollup: true
+    can_approve_artifacts: [ops, leadership]
+
+  - telegram_user_id: 100000003
+    name: "Example CFO"
+    role: cfo
+    tenants: [finance, leadership]
+    can_rollup: true
+    can_approve_artifacts: [finance, leadership]
+
+  - telegram_user_id: 100000004
+    name: "Example Marketing Lead"
+    role: marketing
+    tenants: [marketing]
+    can_rollup: false
+    can_approve_artifacts: [marketing]
+
+  - telegram_user_id: 100000005
+    name: "Example Sales Rep"
+    role: sales
+    tenants: [sales]
+    can_rollup: false
+    can_approve_artifacts: [sales]
+
+  # ... one entry per wider-team person (8-12 total expected) ...
+
+defaults:
+  # Anyone not listed above gets zero access — fail closed.
+  unknown_user_tenants: []
+  unknown_user_can_rollup: false

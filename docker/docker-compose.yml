@@ -1,0 +1,21 @@
+services:
+  team-portal:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - KANBAN_DB_PATH=/data/kanban.db
+      - USERS_YAML_PATH=/config/users.yaml
+      - HERMES_BIN=hermes   # see Dockerfile TODO — not installed in-image yet
+      - PORTAL_BASE_URL=http://localhost:8080
+      - SESSION_SECRET=${SESSION_SECRET:?set a real random secret, not the dev default}
+    volumes:
+      # Bind-mount the REAL kanban.db read-only. Path below assumes the
+      # default profile on a standard macOS Hermes install — adjust per
+      # host, and definitely adjust once this moves to Docker/K8s elsewhere
+      # (Phase 4) since "~/.hermes" won't resolve the same way.
+      - ${HOME}/.hermes/kanban.db:/data/kanban.db:ro
+      - ../users.yaml:/config/users.yaml:ro
+    restart: unless-stopped
