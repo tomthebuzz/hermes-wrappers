@@ -1,5 +1,10 @@
 # FutureTree Team Portal
 
+**Deploying all three repos together? See
+[hermes-bridge/RUNBOOK.md](https://github.com/tomthebuzz/hermes-bridge/blob/main/RUNBOOK.md)
+for the full step-by-step order — this README covers this repo's own
+internals.**
+
 Standalone web app giving the wider team (non-developers) scoped access to
 Kanban board status and Artifact review — nothing else. Deliberately NOT a
 Hermes dashboard plugin: the dashboard's plugin HTTP routes are
