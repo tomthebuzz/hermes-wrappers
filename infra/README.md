@@ -6,11 +6,15 @@ kubectl apply -k infra/base/
 
 ## Before you apply this for real
 
-1. **Resolve the kanban.db access architecture** — see the big comment
-   block at the top of `infra/base/deployment.yaml`. This repo assumes
-   Option A (Hermes itself runs in-cluster with a shared PVC) but that
-   PVC/StatefulSet isn't defined here — it belongs wherever your core
-   Hermes deployment lives. Pick A, B, or C before applying.
+1. **kanban.db access is resolved for writes, same as it ever was for
+   reads.** Reads: bind-mounted file (Option C from the original note,
+   now just "the normal way" since there's no cluster scheduling
+   ambiguity on a single Docker host — this still applies in K8s too via
+   a PVC, see cronjob manifests in hermes-team-bots for the mirror of
+   this). Writes: route through **hermes-bridge**, a standalone service
+   running natively next to the real Hermes install — this container
+   execs nothing, it just calls the bridge over HTTP. See
+   `../hermes-bridge/README.md`.
 
 2. **Build and push a real image** — `deployment.yaml` points at a
    placeholder `ghcr.io/tomthebuzz/team-portal:latest`. Build from

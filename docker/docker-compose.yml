@@ -8,7 +8,8 @@ services:
     environment:
       - KANBAN_DB_PATH=/data/kanban.db
       - USERS_YAML_PATH=/config/users.yaml
-      - HERMES_BIN=hermes   # see Dockerfile TODO — not installed in-image yet
+      - HERMES_BRIDGE_URL=http://host.docker.internal:8765
+      - HERMES_BRIDGE_API_KEY=${HERMES_BRIDGE_API_KEY:?set this to the hermes-bridge service's API key}
       - PORTAL_BASE_URL=http://localhost:8080
       - SESSION_SECRET=${SESSION_SECRET:?set a real random secret, not the dev default}
     volumes:

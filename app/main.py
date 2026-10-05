@@ -35,7 +35,11 @@ SESSION_SECRET = os.environ.get("SESSION_SECRET", "dev-insecure-change-me")
 
 app = FastAPI(title="FutureTree Team Portal")
 rbac = RBAC(USERS_YAML_PATH)
-magic_link = MagicLinkAuth(hermes_bin=HERMES_BIN, portal_base_url=PORTAL_BASE_URL)
+magic_link = MagicLinkAuth(
+    hermes_bin=HERMES_BIN, portal_base_url=PORTAL_BASE_URL,
+    bridge_url=os.environ.get("HERMES_BRIDGE_URL"),
+    bridge_api_key=os.environ.get("HERMES_BRIDGE_API_KEY"),
+)
 signer = URLSafeTimedSerializer(SESSION_SECRET, salt="team-portal-session")
 
 SESSION_COOKIE = "portal_session"

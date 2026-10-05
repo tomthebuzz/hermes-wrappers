@@ -27,6 +27,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 
+import httpx
 
 TOKEN_TTL_SECONDS = 600  # 10 minutes
 
@@ -38,9 +39,12 @@ class PendingToken:
 
 
 class MagicLinkAuth:
-    def __init__(self, hermes_bin: str, portal_base_url: str):
+    def __init__(self, hermes_bin: str, portal_base_url: str,
+                 bridge_url: str | None = None, bridge_api_key: str | None = None):
         self._hermes_bin = hermes_bin
         self._portal_base_url = portal_base_url.rstrip("/")
+        self._bridge_url = bridge_url
+        self._bridge_api_key = bridge_api_key
         self._pending: dict[str, PendingToken] = {}
 
     def issue(self, telegram_user_id: int) -> str:
@@ -54,12 +58,21 @@ class MagicLinkAuth:
             "FutureTree Team Portal login link (expires in "
             f"{TOKEN_TTL_SECONDS // 60} minutes):\n{link}"
         )
-        # UNVERIFIED invocation shape — see module docstring.
-        subprocess.run(
-            [self._hermes_bin, "send", "telegram",
-             "--chat-id", str(telegram_user_id), message],
-            capture_output=True, text=True, check=False, timeout=15,
-        )
+        if self._bridge_url:
+            headers = {"X-API-Key": self._bridge_api_key} if self._bridge_api_key else {}
+            try:
+                httpx.post(f"{self._bridge_url}/messaging/telegram/send",
+                           json={"chat_id": str(telegram_user_id), "text": message},
+                           headers=headers, timeout=15)
+            except httpx.HTTPError:
+                pass  # best-effort — a failed send just means the user doesn't get a link; they can retry
+        else:
+            # UNVERIFIED invocation shape — direct-mode fallback, same caveat as before.
+            subprocess.run(
+                [self._hermes_bin, "send", "telegram",
+                 "--chat-id", str(telegram_user_id), message],
+                capture_output=True, text=True, check=False, timeout=15,
+            )
         return token
 
     def verify(self, token: str) -> int | None:

@@ -1,31 +1,19 @@
-# UNRESOLVED ARCHITECTURE DECISION — flagged since the Dockerfile TODO,
-# now surfaced here because it's a K8s volume question, not just a
-# container one. Three options, pick one before applying this in prod:
+# kanban.db access: reads are a bind-mounted/PVC-mounted file (see the
+# hermes-home volume below) — unaffected by containerization since SQLite
+# WAL supports concurrent external readers. Writes go through
+# hermes-bridge (../../hermes-bridge), a standalone service running
+# natively next to the real Hermes install — this Deployment calls it over
+# HTTP, never execs `hermes` itself. See that repo's README for why.
 #
-# Option A (what this manifest assumes below): Hermes itself ALSO runs in
-#   this cluster (e.g. as a StatefulSet with its own PVC for ~/.hermes),
-#   and this Deployment mounts that SAME PVC read-only for kanban.db, and
-#   execs into a sidecar container that has the `hermes` binary installed
-#   for the write paths (kanban_write.py shells out to `hermes kanban ...`).
-#   This is the cleanest long-term shape given "potentially hosted en
-#   suite with local models" — but requires a Hermes-in-cluster manifest
-#   this repo doesn't own (lives wherever the core Hermes deployment is
-#   defined — not scaffolded here, out of this repo's scope).
-#
-# Option B: Hermes stays on a single host (e.g. the Mac mini) outside the
-#   cluster, and this Deployment reaches it over the network via a thin
-#   HTTP shim (not built yet) instead of a shared filesystem. Swap the
-#   volumeMounts below for an env var pointing at that shim's URL, and
-#   change kanban_read.py / kanban_write.py accordingly.
-#
-# Option C (dev/staging only, NOT for prod): hostPath mount straight to
-#   the Hermes host's ~/.hermes if this Deployment is pinned to run on
-#   that exact node via nodeSelector/nodeAffinity. Fragile, single-node,
-#   fine for the Mac mini staging environment, not for a real cluster.
-#
-# This manifest assumes Option A's PVC shape (named hermes-home-pvc,
-# defined wherever the core Hermes deployment lives) so the names line up
-# once that decision is made — adjust the volume source if you pick B or C.
+# The one open question this manifest still can't answer for you: WHERE
+# that PVC comes from. If Hermes itself also runs in this cluster (e.g. a
+# StatefulSet with its own PVC for ~/.hermes), mount that same PVC
+# read-only here (assumed below, named hermes-home-pvc — defined wherever
+# your core Hermes deployment lives, not scaffolded in this repo). If
+# Hermes stays on a single external host instead, swap this PVC for
+# whatever your cluster uses to reach that host's filesystem (NFS export,
+# etc.) — hermes-bridge solves the CLI-exec problem, not the "where does
+# the file live" problem.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -57,8 +45,13 @@ spec:
               value: /config/users.yaml
             - name: SHARED_CONFIG_DIR
               value: /shared-config
-            - name: HERMES_BIN
-              value: hermes   # see Dockerfile TODO — needs to actually resolve in this container
+            - name: HERMES_BRIDGE_URL
+              value: "http://hermes-bridge:8765"   # adjust to wherever hermes-bridge actually runs/is reachable from this cluster
+            - name: HERMES_BRIDGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-bridge-key
+                  key: api_key
             - name: PORTAL_BASE_URL
               value: "https://futuretree.com"   # Phase 4 — tailnet URL for now, see infra README
             - name: SESSION_SECRET

@@ -9,6 +9,18 @@ binding). This app can't inherit that assumption since it's meant to be
 reachable by 8-12 external people and eventually a public domain
 (futuretree.com), so it does its own auth and its own RBAC from scratch.
 
+## Hermes Bridge (write path)
+
+Kanban writes (create/claim/assign/comment/approve/reject/publish-for-
+review) and the magic-link Telegram send both go through
+**[hermes-bridge](../hermes-bridge)** when `HERMES_BRIDGE_URL` is set —
+the standalone service that runs natively next to the real Hermes install
+and execs the `hermes` CLI on this app's behalf, so this container never
+needs Hermes installed in it. See that repo's README for why this exists
+and how to run it. Without `HERMES_BRIDGE_URL` set, this app falls back to
+shelling out to a local `hermes` binary directly (useful for native/dev
+runs where this process IS on the Hermes host) — same code, two modes.
+
 ## IMPORTANT — built blind, verify before trusting
 
 Written in a sandbox with no live Hermes install, no real kanban.db, and no
@@ -57,7 +69,7 @@ team-portal/
     static/                minimal UI (to flesh out in Phase 1/2)
   docker/
     Dockerfile
-    docker-compose.yml
+    docker-compose.yml   # points at hermes-bridge via host.docker.internal
   users.yaml.example
   requirements.txt
   README.md (this file)

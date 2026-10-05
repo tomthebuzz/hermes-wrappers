@@ -8,16 +8,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 
 # TODO (Phase 1 blocker to resolve before real deploy): `hermes kanban`
-# write-path commands shell out to a `hermes` binary from inside this
-# container (see app/kanban_write.py). That means either:
-#   (a) install the full Hermes Agent CLI inside this image too, pointed at
-#       the same HERMES_HOME as the real gateway (via a shared volume), or
-#   (b) replace the subprocess calls with a thin HTTP shim that runs ON the
-#       Hermes host and the container calls over the network instead.
-# (a) is simpler short-term; (b) is cleaner once this is containerized
-# separately from the Hermes host in prod. Decide before Phase 1 sign-off.
-# Nothing installs `hermes` here yet — this image will fail on any write
-# endpoint until that's resolved.
+# write-path commands now route through the hermes-bridge service (see
+# app/kanban_write.py and app/auth/magic_link.py — both are dual-mode,
+# bridge-first when HERMES_BRIDGE_URL is set). So this container does NOT
+# need the `hermes` CLI installed in it anymore for writes. It still reads
+# kanban.db directly (bind-mounted below in docker-compose.yml), which is
+# unaffected by this change.
+#
+# Set HERMES_BRIDGE_URL=http://host.docker.internal:8765 and
+# HERMES_BRIDGE_API_KEY=<the bridge's key> in docker-compose.yml (already
+# done) and this container is fully self-contained — no Hermes install
+# needed inside it at all.
 
 EXPOSE 8080
 ENV PORTAL_BASE_URL=http://localhost:8080
