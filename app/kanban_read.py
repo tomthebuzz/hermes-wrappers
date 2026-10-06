@@ -1,17 +1,13 @@
 """
 Read-only access to ~/.hermes/kanban.db.
 
-UNVERIFIED SCHEMA: the actual table/column names for kanban.db were not
-published in the docs excerpts available when this was written (the docs
-describe the CLI/tool/REST surface, not the raw SQLite schema). The queries
-below are a best-effort guess at a plausible schema (a `tasks` table with
-id/title/status/tenant/assignee/body/created_at/updated_at columns, plus a
-`task_events` append-only table). BEFORE WIRING THIS UP FOR REAL:
+Verified against the live Hermes Kanban schema pasted from the Mac mini:
+  - tasks has no updated_at column; we synthesize one from the latest
+    task_events.created_at, falling back to completed_at/started_at/created_at.
+  - task_comments stores its text in `body`, not `text`; list_comments()
+    aliases body AS text so the rest of the app can use one stable key.
 
-    sqlite3 ~/.hermes/kanban.db ".schema"
-
-and fix every query in this file to match the actual column names. This
-module is deliberately isolated so that fix is a single-file change.
+All writes still go through hermes-bridge / `hermes kanban`, never raw SQL.
 """
 from __future__ import annotations
 
@@ -32,7 +28,18 @@ def list_tasks(db_path: Path, tenants: Optional[list] = None, status: Optional[s
     """tenants=None means no tenant filter (rollup view)."""
     conn = _connect(db_path)
     try:
-        sql = "SELECT * FROM tasks WHERE 1=1"
+        sql = """
+            SELECT
+                t.*,
+                COALESCE(
+                    (SELECT MAX(e.created_at) FROM task_events e WHERE e.task_id = t.id),
+                    t.completed_at,
+                    t.started_at,
+                    t.created_at
+                ) AS updated_at
+            FROM tasks t
+            WHERE 1=1
+        """
         params: list = []
         if tenants:
             placeholders = ",".join("?" for _ in tenants)
@@ -51,7 +58,18 @@ def list_tasks(db_path: Path, tenants: Optional[list] = None, status: Optional[s
 def get_task(db_path: Path, task_id: str) -> Optional[dict]:
     conn = _connect(db_path)
     try:
-        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        row = conn.execute("""
+            SELECT
+                t.*,
+                COALESCE(
+                    (SELECT MAX(e.created_at) FROM task_events e WHERE e.task_id = t.id),
+                    t.completed_at,
+                    t.started_at,
+                    t.created_at
+                ) AS updated_at
+            FROM tasks t
+            WHERE t.id = ?
+        """, (task_id,)).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
@@ -61,7 +79,18 @@ def list_comments(db_path: Path, task_id: str) -> list[dict]:
     conn = _connect(db_path)
     try:
         rows = conn.execute(
-            "SELECT * FROM task_comments WHERE task_id = ? ORDER BY created_at ASC",
+            """
+            SELECT
+                id,
+                task_id,
+                author,
+                body,
+                body AS text,
+                created_at
+            FROM task_comments
+            WHERE task_id = ?
+            ORDER BY created_at ASC
+            """,
             (task_id,),
         ).fetchall()
         return [dict(r) for r in rows]
