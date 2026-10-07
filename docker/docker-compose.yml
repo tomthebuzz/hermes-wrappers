@@ -7,6 +7,7 @@ services:
       - "8080:8080"
     environment:
       - KANBAN_DB_PATH=/data/kanban.db
+      - KANBAN_ATTACHMENTS_ROOT=/data/attachments
       - USERS_YAML_PATH=/config/users.yaml
       - HERMES_BRIDGE_URL=http://host.docker.internal:8765
       - HERMES_BRIDGE_API_KEY=${HERMES_BRIDGE_API_KEY:?set this to the hermes-bridge service's API key}
@@ -18,5 +19,6 @@ services:
       # host, and definitely adjust once this moves to Docker/K8s elsewhere
       # (Phase 4) since "~/.hermes" won't resolve the same way.
       - ${HOME}/.hermes/kanban.db:/data/kanban.db:ro
+      - ${HOME}/.hermes/kanban/attachments:/data/attachments:ro
       - ../users.yaml:/config/users.yaml  # writable: profile self-service can update telegram_username
     restart: unless-stopped

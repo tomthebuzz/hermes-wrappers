@@ -107,3 +107,28 @@ def distinct_tenants(db_path: Path) -> list[str]:
         return [r["tenant"] for r in rows]
     finally:
         conn.close()
+
+
+def list_attachments(db_path: Path, task_id: str) -> list[dict]:
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            """SELECT id, task_id, filename, content_type, size, uploaded_by, created_at
+               FROM task_attachments WHERE task_id = ? ORDER BY created_at ASC""",
+            (task_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_attachment(db_path: Path, attachment_id: int) -> Optional[dict]:
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT id, task_id, filename, stored_path, content_type, size, uploaded_by, created_at FROM task_attachments WHERE id = ?",
+            (attachment_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()

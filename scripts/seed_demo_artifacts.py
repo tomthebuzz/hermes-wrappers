@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Create three clearly-labelled review artifacts through hermes-bridge.
+"""Create or repair three clearly-labelled review artifacts through hermes-bridge.
 
 Run only when intentionally seeding the live board:
   HERMES_BRIDGE_URL=http://127.0.0.1:8765 \
   HERMES_BRIDGE_API_KEY=... KANBAN_DB_PATH=~/.hermes/kanban.db \
   python3 scripts/seed_demo_artifacts.py --confirm
 
-This script never writes SQLite. It uses the bridge for create/comment/review
-transitions. Seeded items use the existing `marketing` tenant so there is no
-extra demo tenant; they are visible only to users allowed to see that tenant.
+The script never writes SQLite. It reads task status/comments read-only, then uses
+the bridge for creation, comments and review transitions. It re-attempts the
+review transition for an existing demo task that is not yet in `review`.
 """
 from __future__ import annotations
 
@@ -30,12 +30,29 @@ SAMPLES = [
 ]
 
 
-def existing_titles(db_path: Path) -> set[str]:
+def existing_demo_tasks(db_path: Path) -> dict[str, dict]:
     if not db_path.exists():
-        return set()
+        return {}
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        return {r["title"]: dict(r) for r in conn.execute(
+            "SELECT id, title, body, status FROM tasks WHERE title LIKE 'DEMO · %'"
+        )}
+    finally:
+        conn.close()
+
+
+def has_marker(db_path: Path, task_id: str, marker: str) -> bool:
+    if not db_path.exists():
+        return False
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
-        return {row[0] for row in conn.execute("SELECT title FROM tasks WHERE title LIKE 'DEMO · %'")}
+        row = conn.execute(
+            "SELECT 1 FROM task_comments WHERE task_id = ? AND body LIKE ? LIMIT 1",
+            (task_id, f"%{marker}%"),
+        ).fetchone()
+        return row is not None
     finally:
         conn.close()
 
@@ -53,12 +70,12 @@ def task_id_from_detail(detail: str) -> str:
     match = re.search(r"\bt_[A-Za-z0-9_-]+\b", detail)
     if match:
         return match.group(0)
-    raise RuntimeError(f"Could not extract task ID from bridge create response: {detail[:500]}")
+    raise RuntimeError(f"Could not extract task ID from bridge response: {detail[:500]}")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--confirm", action="store_true", help="confirm creation of live test cards")
+    parser.add_argument("--confirm", action="store_true", help="confirm creation/repair of live test cards")
     parser.add_argument("--tenant", default="marketing", choices=["tech", "marketing", "sales", "finance", "ops", "leadership"])
     args = parser.parse_args()
     if not args.confirm:
@@ -69,26 +86,45 @@ def main() -> int:
         print("HERMES_BRIDGE_API_KEY is required", file=sys.stderr)
         return 2
     db_path = Path(os.path.expanduser(os.environ.get("KANBAN_DB_PATH", "~/.hermes/kanban.db")))
-    known = existing_titles(db_path)
+    known = existing_demo_tasks(db_path)
     headers = {"X-API-Key": key}
-    created = []
-    with httpx.Client(base_url=base, headers=headers, timeout=30) as client:
+    created = repaired = skipped = 0
+    with httpx.Client(base_url=base, headers=headers, timeout=60) as client:
         for title, body, sla_hours in SAMPLES:
-            if title in known:
-                print(f"skip existing: {title}")
+            current = known.get(title)
+            if current and current["status"] == "review":
+                print(f"already in review: {title} ({current['id']})")
+                skipped += 1
                 continue
-            r = client.post("/kanban/tasks", json={"title": title, "tenant": args.tenant, "body": body})
-            r.raise_for_status()
-            task_id = task_id_from_detail(r.json().get("detail", ""))
+            if current:
+                task_id = str(current["id"])
+                if current["status"] == "blocked":
+                    un = client.post(f"/kanban/tasks/{task_id}/transition", json={"status": "todo"})
+                    un.raise_for_status()
+                repaired += 1
+                print(f"repairing existing demo task {task_id} from status={current['status']}: {title}")
+            else:
+                r = client.post("/kanban/tasks", json={
+                    "title": title, "tenant": args.tenant, "body": body,
+                    "status": "running", "priority": 1,
+                })
+                r.raise_for_status()
+                task_id = task_id_from_detail(r.json().get("detail", ""))
+                created += 1
             deadline = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=sla_hours)).isoformat().replace("+00:00", "Z")
-            for text in ("DEMO-ARTIFACT: yes", f"SLA-DEADLINE: {deadline}"):
-                c = client.post(f"/kanban/tasks/{task_id}/comments", json={"text": text, "author": "demo-seeder"})
+            if not has_marker(db_path, task_id, "DEMO-ARTIFACT"):
+                c = client.post(f"/kanban/tasks/{task_id}/comments", json={
+                    "text": "DEMO-ARTIFACT: yes", "author": "demo-seeder"})
                 c.raise_for_status()
-            pub = client.post(f"/kanban/tasks/{task_id}/publish-for-review", json={"summary": f"Demo/test artifact; SLA target approximately {sla_hours}h."})
+            if not has_marker(db_path, task_id, "SLA-DEADLINE"):
+                c = client.post(f"/kanban/tasks/{task_id}/comments", json={
+                    "text": f"SLA-DEADLINE: {deadline}", "author": "demo-seeder"})
+                c.raise_for_status()
+            pub = client.post(f"/kanban/tasks/{task_id}/publish-for-review", json={
+                "summary": f"Demo/test artifact; SLA target approximately {sla_hours}h."})
             pub.raise_for_status()
-            print(f"created {task_id}: {title} [{args.tenant}] → review")
-            created.append(task_id)
-    print(f"done: {len(created)} created; {len(SAMPLES)-len(created)} already existed")
+            print(f"ready for review {task_id}: {title} [{args.tenant}]")
+    print(f"done: {created} created, {repaired} repaired, {skipped} already in review")
     return 0
 
 

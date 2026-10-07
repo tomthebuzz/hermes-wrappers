@@ -18,10 +18,11 @@ reachable by 8-12 external people and eventually a public domain
 
 - Header navigation: **Kanban**, **Artifacts**, **Profile**, and **Log out**.
 - Profile shows account, Telegram username, immutable numeric Telegram user ID/chat ID, role, and tenant scope. Users can update their username; numeric Telegram IDs are identity/security credentials and remain administrator-managed in `users.yaml` (changing them without verifying the new Telegram account could transfer access).
-- Kanban is a column board for triage, todo, ready, running, review, blocked, done, and archived. Filters include team, assignee / My Items, due-date bucket (overdue, this week, this month, later, no date), and priority.
+- Kanban is a column board for triage, todo, ready, running, review, blocked, done, and archived. Filters include team, assignee / My Items, due-date bucket (overdue, this week, this month, later, no date), and priority. Each column has a **+** action to create a card assigned to the active portal user.
 - Drag/drop uses Hermes CLI transitions through the bridge; it never updates SQLite directly. Hermes owns legal transitions, so some drops are rejected when the current state cannot transition to the selected lane. Review/done transitions require artifact approval permission.
-- Click a task card to open its details modal. Title, body, priority, assignee, and comments are editable within the user's tenant scope. Artifact review cards also offer approve/request-changes actions to authorized reviewers.
-- Three clearly marked demo artifacts can be seeded through the bridge with `python3 scripts/seed_demo_artifacts.py --confirm`. They are created in the existing `marketing` tenant (no extra demo tenant), and are genuine review-lane tasks, so authorized users can comment, approve, or request changes. The script is idempotent by title. Remove them with `hermes kanban archive <id>` after testing.
+- Click a task card to open its details modal. Title, body, priority, assignee, comments, and attachments are visible; title/body/priority/assignee and comments can be edited within the user's tenant scope. Artifact review cards offer approve/request-changes and file upload actions to authorized users.
+- File uploads are capped at 25 MB and are attached through `hermes kanban attach`; the portal mounts the host attachment directory read-only for authorized downloads. They become available to Hermes workers as task attachments.
+- Three clearly marked demo artifacts can be seeded through the bridge with `python3 scripts/seed_demo_artifacts.py --confirm`. They are created in the existing `marketing` tenant (no extra demo tenant), and are genuine review-lane tasks, so authorized users can comment, approve, or request changes. The script repairs partial demo tasks that aren't yet in `review`. Remove them with `hermes kanban archive <id>` after testing.
 
 ## Hermes Bridge (write path)
 

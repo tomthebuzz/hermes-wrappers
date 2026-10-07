@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -55,14 +57,46 @@ def _run(hermes_bin: str, *args: str) -> CLIResult:
 
 
 def create_task(hermes_bin: str, title: str, tenant: str, body: str = "",
-                 assignee: Optional[str] = None) -> CLIResult:
+                 assignee: Optional[str] = None, status: str = "running",
+                 priority: int = 0) -> CLIResult:
     if BRIDGE_URL:
         return _bridge_call("POST", "/kanban/tasks",
-                             {"title": title, "tenant": tenant, "body": body, "assignee": assignee})
-    args = ["create", title, "--tenant", tenant, "--body", body, "--json"]
+                             {"title": title, "tenant": tenant, "body": body,
+                              "assignee": assignee, "status": status, "priority": priority})
+    initial = "blocked" if status in {"todo", "ready"} else "running"
+    args = ["create", title, "--tenant", tenant, "--body", body,
+            "--initial-status", initial, "--priority", str(priority), "--json"]
+    if status == "triage":
+        args = ["create", title, "--tenant", tenant, "--body", body,
+                "--triage", "--priority", str(priority), "--json"]
     if assignee:
         args += ["--assignee", assignee]
     return _run(hermes_bin, *args)
+
+
+def upload_attachment(hermes_bin: str, task_id: str, filename: str,
+                      data: bytes, content_type: str | None = None) -> CLIResult:
+    safe_name = Path(filename).name.strip()
+    if not safe_name or safe_name in {".", ".."}:
+        return CLIResult(False, "", "invalid filename")
+    if BRIDGE_URL:
+        headers = {"X-API-Key": BRIDGE_API_KEY} if BRIDGE_API_KEY else {}
+        try:
+            response = httpx.post(
+                f"{BRIDGE_URL}/kanban/tasks/{task_id}/attachments",
+                files={"file": (safe_name, data, content_type or "application/octet-stream")},
+                headers=headers,
+                timeout=60,
+            )
+        except httpx.HTTPError as e:
+            return CLIResult(False, "", f"bridge upload failed: {e}")
+        if response.status_code >= 300:
+            return CLIResult(False, "", response.text)
+        return CLIResult(True, response.text, "")
+    with tempfile.TemporaryDirectory(prefix="portal-attachment-") as tmp:
+        path = Path(tmp) / safe_name
+        path.write_bytes(data)
+        return _run(hermes_bin, "attach", task_id, str(path))
 
 
 def edit_task(hermes_bin: str, task_id: str, title: str | None = None,
