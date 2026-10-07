@@ -72,7 +72,7 @@ class MagicLinkAuth:
         # Direct-mode fallback for native/dev runs.
         try:
             result = subprocess.run(
-                [self._hermes_bin, "send", "telegram", "--chat-id", str(delivery_target), message],
+                [self._hermes_bin, "send", "--to", f"telegram:{delivery_target}", message],
                 capture_output=True, text=True, check=False, timeout=15,
             )
         except Exception as e:
