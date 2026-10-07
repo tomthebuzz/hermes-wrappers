@@ -72,16 +72,19 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), na
 # --- auth ---
 
 class LoginRequest(BaseModel):
-    telegram_user_id: int
+    login: str
 
 
 @app.post("/login")
 def login(body: LoginRequest):
-    if rbac.get(body.telegram_user_id) is None:
+    scope = rbac.resolve_login(body.login)
+    if scope is None:
         # Deliberately vague error — don't let this endpoint be used to
-        # enumerate which Telegram IDs are provisioned.
+        # enumerate which Telegram handles/IDs are provisioned.
         raise HTTPException(status_code=400, detail="Could not send login link")
-    magic_link.issue(body.telegram_user_id)
+    result = magic_link.issue(scope.telegram_user_id, scope.delivery_target)
+    if not result.delivered:
+        raise HTTPException(status_code=502, detail=f"Could not deliver Telegram login link: {result.error}")
     return {"status": "sent", "note": "Check Telegram for a login link."}
 
 

@@ -1,5 +1,11 @@
 # Example RBAC map for the Team Portal. Copy to users.yaml and fill in real
-# Telegram numeric user IDs (NOT @usernames — see @userinfobot).
+# Telegram identities.
+#
+# Login is by Telegram @username (telegram_username). Delivery is most
+# reliable by numeric ID/chat ID because Telegram bots generally cannot start
+# arbitrary DMs to @usernames until the user has already started the bot.
+# Use @userinfobot to get telegram_user_id. For normal DMs, telegram_chat_id
+# is usually the same value; set it explicitly if your delivery target differs.
 #
 # tenants: which kanban tenants this person can read/write in.
 # can_rollup: true means "ignore the tenant filter, show everything" —
@@ -8,35 +14,45 @@
 #   artifact review actually counts (vs. just commenting).
 
 users:
-  - telegram_user_id: 100000001
+  - telegram_username: example_ceo
+    telegram_user_id: 100000001
+    telegram_chat_id: 100000001
     name: "Example CEO"
     role: ceo
     tenants: [leadership]
     can_rollup: true
     can_approve_artifacts: [leadership]
 
-  - telegram_user_id: 100000002
+  - telegram_username: example_coo
+    telegram_user_id: 100000002
+    telegram_chat_id: 100000002
     name: "Example COO"
     role: coo
     tenants: [ops, leadership]
     can_rollup: true
     can_approve_artifacts: [ops, leadership]
 
-  - telegram_user_id: 100000003
+  - telegram_username: example_cfo
+    telegram_user_id: 100000003
+    telegram_chat_id: 100000003
     name: "Example CFO"
     role: cfo
     tenants: [finance, leadership]
     can_rollup: true
     can_approve_artifacts: [finance, leadership]
 
-  - telegram_user_id: 100000004
+  - telegram_username: example_marketing
+    telegram_user_id: 100000004
+    telegram_chat_id: 100000004
     name: "Example Marketing Lead"
     role: marketing
     tenants: [marketing]
     can_rollup: false
     can_approve_artifacts: [marketing]
 
-  - telegram_user_id: 100000005
+  - telegram_username: example_sales
+    telegram_user_id: 100000005
+    telegram_chat_id: 100000005
     name: "Example Sales Rep"
     role: sales
     tenants: [sales]

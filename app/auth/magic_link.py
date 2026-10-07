@@ -1,24 +1,13 @@
 """
 Magic-link-via-Telegram-DM auth. No domain/widget dependency — works today
-on the tailnet, and is the bridge until team-portal.example.com + the real Telegram
-Login Widget exist (see auth/telegram_widget.py stub).
+on the tailnet, and is the bridge until the real Telegram Login Widget
+exists.
 
-Flow:
-  1. User visits /login, enters their Telegram numeric user ID (or we look
-     it up from a name->id map in users.yaml in a future iteration).
-  2. We generate a short random token, store it with an expiry (in-memory
-     here — swap for Redis/DB before any multi-instance deployment).
-  3. We DM the token as a link to that Telegram user ID via `hermes send`.
-     UNVERIFIED: `hermes send telegram --chat-id <id> "<text>"` shape is a
-     best-effort guess from the CLI reference docs; confirm the real flag
-     name for targeting an arbitrary chat_id (vs. the default configured
-     recipient) before relying on this.
-  4. User clicks the link (/login/verify?token=...), session cookie set.
-
-This is intentionally simple for Phase 1. Token store is process-local and
-single-instance only — fine for a 10-20 person internal tool on one host,
-not fine once this runs replicated/behind a load balancer (swap the dict
-for Redis at that point).
+Delivery target comes from users.yaml via RBAC.UserScope.delivery_target.
+Prefer numeric `telegram_chat_id`/`telegram_user_id` for DMs: Telegram bots
+generally cannot initiate arbitrary DMs by @username until the user has
+started the bot. @username is supported as the user-facing login handle;
+delivery stays numeric unless explicitly configured otherwise.
 """
 from __future__ import annotations
 
@@ -38,6 +27,13 @@ class PendingToken:
     expires_at: float
 
 
+@dataclass
+class IssueResult:
+    token: str
+    delivered: bool
+    error: str = ""
+
+
 class MagicLinkAuth:
     def __init__(self, hermes_bin: str, portal_base_url: str,
                  bridge_url: str | None = None, bridge_api_key: str | None = None):
@@ -47,7 +43,7 @@ class MagicLinkAuth:
         self._bridge_api_key = bridge_api_key
         self._pending: dict[str, PendingToken] = {}
 
-    def issue(self, telegram_user_id: int) -> str:
+    def issue(self, telegram_user_id: int, delivery_target: str) -> IssueResult:
         token = secrets.token_urlsafe(32)
         self._pending[token] = PendingToken(
             telegram_user_id=telegram_user_id,
@@ -61,19 +57,29 @@ class MagicLinkAuth:
         if self._bridge_url:
             headers = {"X-API-Key": self._bridge_api_key} if self._bridge_api_key else {}
             try:
-                httpx.post(f"{self._bridge_url}/messaging/telegram/send",
-                           json={"chat_id": str(telegram_user_id), "text": message},
-                           headers=headers, timeout=15)
-            except httpx.HTTPError:
-                pass  # best-effort — a failed send just means the user doesn't get a link; they can retry
-        else:
-            # UNVERIFIED invocation shape — direct-mode fallback, same caveat as before.
-            subprocess.run(
-                [self._hermes_bin, "send", "telegram",
-                 "--chat-id", str(telegram_user_id), message],
+                resp = httpx.post(
+                    f"{self._bridge_url}/messaging/telegram/send",
+                    json={"chat_id": str(delivery_target), "text": message},
+                    headers=headers,
+                    timeout=15,
+                )
+            except httpx.HTTPError as e:
+                return IssueResult(token=token, delivered=False, error=f"bridge request failed: {e}")
+            if resp.status_code >= 300:
+                return IssueResult(token=token, delivered=False, error=f"bridge returned {resp.status_code}: {resp.text[:300]}")
+            return IssueResult(token=token, delivered=True)
+
+        # Direct-mode fallback for native/dev runs.
+        try:
+            result = subprocess.run(
+                [self._hermes_bin, "send", "telegram", "--chat-id", str(delivery_target), message],
                 capture_output=True, text=True, check=False, timeout=15,
             )
-        return token
+        except Exception as e:
+            return IssueResult(token=token, delivered=False, error=f"direct send failed: {e}")
+        if result.returncode != 0:
+            return IssueResult(token=token, delivered=False, error=result.stderr[:300] or "direct send failed")
+        return IssueResult(token=token, delivered=True)
 
     def verify(self, token: str) -> int | None:
         pending = self._pending.pop(token, None)
