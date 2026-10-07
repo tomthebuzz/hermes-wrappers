@@ -57,6 +57,19 @@ def has_marker(db_path: Path, task_id: str, marker: str) -> bool:
         conn.close()
 
 
+def require_success(response: httpx.Response) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError:
+        try:
+            detail = response.json().get("detail", response.text)
+        except (ValueError, AttributeError):
+            detail = response.text
+        print(f"Bridge returned HTTP {response.status_code}: {detail}", file=sys.stderr)
+        print('Check `curl -H "X-API-Key: $HERMES_BRIDGE_API_KEY" http://127.0.0.1:8765/diagnostics` and the bridge logs.', file=sys.stderr)
+        raise SystemExit(1)
+
+
 def task_id_from_detail(detail: str) -> str:
     try:
         data = json.loads(detail)
@@ -100,7 +113,7 @@ def main() -> int:
                 task_id = str(current["id"])
                 if current["status"] == "blocked":
                     un = client.post(f"/kanban/tasks/{task_id}/transition", json={"status": "todo"})
-                    un.raise_for_status()
+                    require_success(un)
                 repaired += 1
                 print(f"repairing existing demo task {task_id} from status={current['status']}: {title}")
             else:
@@ -108,21 +121,21 @@ def main() -> int:
                     "title": title, "tenant": args.tenant, "body": body,
                     "status": "running", "priority": 1,
                 })
-                r.raise_for_status()
+                require_success(r)
                 task_id = task_id_from_detail(r.json().get("detail", ""))
                 created += 1
             deadline = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=sla_hours)).isoformat().replace("+00:00", "Z")
             if not has_marker(db_path, task_id, "DEMO-ARTIFACT"):
                 c = client.post(f"/kanban/tasks/{task_id}/comments", json={
                     "text": "DEMO-ARTIFACT: yes", "author": "demo-seeder"})
-                c.raise_for_status()
+                require_success(c)
             if not has_marker(db_path, task_id, "SLA-DEADLINE"):
                 c = client.post(f"/kanban/tasks/{task_id}/comments", json={
                     "text": f"SLA-DEADLINE: {deadline}", "author": "demo-seeder"})
-                c.raise_for_status()
+                require_success(c)
             pub = client.post(f"/kanban/tasks/{task_id}/publish-for-review", json={
                 "summary": f"Demo/test artifact; SLA target approximately {sla_hours}h."})
-            pub.raise_for_status()
+            require_success(pub)
             print(f"ready for review {task_id}: {title} [{args.tenant}]")
     print(f"done: {created} created, {repaired} repaired, {skipped} already in review")
     return 0
