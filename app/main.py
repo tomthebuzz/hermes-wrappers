@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -103,6 +104,57 @@ def login_verify(token: str):
     return response
 
 
+@app.post("/logout")
+def logout():
+    response = RedirectResponse(url="/", status_code=303)
+    response.delete_cookie(SESSION_COOKIE)
+    return response
+
+
+@app.get("/api/profile")
+def profile(user: UserScope = Depends(require_user)):
+    return {
+        "name": user.name,
+        "role": user.role,
+        "telegram_username": user.telegram_username,
+        "telegram_user_id": user.telegram_user_id,
+        "telegram_chat_id": user.telegram_chat_id or str(user.telegram_user_id),
+        "tenants": list(user.tenants),
+        "can_rollup": user.can_rollup,
+        "can_approve_artifacts": list(user.can_approve_artifacts),
+    }
+
+
+class ProfileUpdateRequest(BaseModel):
+    telegram_username: str
+
+
+@app.patch("/api/profile")
+def update_profile(body: ProfileUpdateRequest, user: UserScope = Depends(require_user)):
+    username = body.telegram_username.strip().removeprefix("@").lower()
+    if not username or len(username) > 32 or not username.replace("_", "").isalnum():
+        raise HTTPException(status_code=422, detail="Enter a valid Telegram username without @")
+    try:
+        data = yaml.safe_load(USERS_YAML_PATH.read_text()) or {}
+        entries = data.get("users", [])
+        target = next((e for e in entries if int(e.get("telegram_user_id", -1)) == user.telegram_user_id), None)
+        if target is None:
+            raise HTTPException(status_code=409, detail="User entry is no longer configured")
+        for entry in entries:
+            existing = str(entry.get("telegram_username", "")).strip().removeprefix("@").lower()
+            if existing == username and int(entry.get("telegram_user_id", -1)) != user.telegram_user_id:
+                raise HTTPException(status_code=409, detail="That Telegram username is already assigned")
+        target["telegram_username"] = username
+        # users.yaml is mounted as a single writable Docker file. Replace its
+        # contents in-place (os.replace would replace the container mountpoint,
+        # not the host file); serialize first so YAML errors cannot truncate it.
+        USERS_YAML_PATH.write_text(yaml.safe_dump(data, sort_keys=False))
+        rbac.reload()
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not save profile; check users.yaml mount permissions: {e}")
+    return {"ok": True, "telegram_username": username}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     # Auth is enforced client-side by the SPA hitting /api/board and
@@ -119,6 +171,7 @@ def board(user: UserScope = Depends(require_user)):
     tenants = user.readable_tenants(all_tenants)
     tasks = kanban_read.list_tasks(KANBAN_DB_PATH, tenants=tenants)
     for t in tasks:
+        t["comments"] = kanban_read.list_comments(KANBAN_DB_PATH, t["id"])
         due = find_due_date(t)
         t["due_date"] = due
         t["overdue"] = is_overdue(due) if due else False
@@ -133,6 +186,9 @@ def task_detail(task_id: str, user: UserScope = Depends(require_user)):
     if not user.can_read_tenant(task.get("tenant", "")):
         raise HTTPException(status_code=403, detail="Not in your scope")
     task["comments"] = kanban_read.list_comments(KANBAN_DB_PATH, task_id)
+    task["can_review"] = user.can_approve_tenant(task.get("tenant", ""))
+    task["sla_deadline"] = find_deadline(task)
+    task["due_date"] = find_due_date(task)
     return task
 
 
@@ -165,6 +221,56 @@ def create_task(body: CreateTaskRequest, user: UserScope = Depends(require_user)
     if not user.can_read_tenant(body.tenant):
         raise HTTPException(status_code=403, detail="Not in your scope")
     result = kanban_write.create_task(HERMES_BIN, body.title, body.tenant, body.body, body.assignee)
+    if not result.ok:
+        raise HTTPException(status_code=502, detail=result.stderr[:500])
+    return {"ok": True}
+
+
+class EditTaskRequest(BaseModel):
+    title: str | None = None
+    body: str | None = None
+    priority: int | None = None
+    assignee: str | None = None
+
+
+@app.patch("/api/tasks/{task_id}")
+def edit_task(task_id: str, body: EditTaskRequest, user: UserScope = Depends(require_user)):
+    task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not user.can_read_tenant(task.get("tenant", "")):
+        raise HTTPException(status_code=403, detail="Not in your scope")
+    if body.title is None and body.body is None and body.priority is None and body.assignee is None:
+        raise HTTPException(status_code=422, detail="At least one editable field is required")
+    if body.title is not None or body.body is not None or body.priority is not None:
+        result = kanban_write.edit_task(HERMES_BIN, task_id, body.title, body.body, body.priority)
+        if not result.ok:
+            raise HTTPException(status_code=502, detail=result.stderr[:500])
+    if body.assignee is not None:
+        result = kanban_write.assign_task(HERMES_BIN, task_id, body.assignee)
+        if not result.ok:
+            raise HTTPException(status_code=502, detail=result.stderr[:500])
+    return {"ok": True}
+
+
+class TransitionTaskRequest(BaseModel):
+    status: str
+    reason: str = "Moved from Team Portal"
+
+
+@app.post("/api/tasks/{task_id}/transition")
+def transition_task(task_id: str, body: TransitionTaskRequest, user: UserScope = Depends(require_user)):
+    task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    allowed_statuses = {"todo", "ready", "running", "review", "blocked", "done", "archived"}
+    if body.status not in allowed_statuses:
+        raise HTTPException(status_code=422, detail=f"Unsupported board transition: {body.status}")
+    if not user.can_read_tenant(task.get("tenant", "")):
+        raise HTTPException(status_code=403, detail="Not in your scope")
+    if body.status in {"review", "done"} and not user.can_approve_tenant(task.get("tenant", "")):
+        raise HTTPException(status_code=403, detail="Not authorized for this transition")
+    result = kanban_write.transition_task(HERMES_BIN, task_id, body.status, body.reason)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
     return {"ok": True}

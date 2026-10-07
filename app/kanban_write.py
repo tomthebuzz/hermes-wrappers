@@ -65,6 +65,37 @@ def create_task(hermes_bin: str, title: str, tenant: str, body: str = "",
     return _run(hermes_bin, *args)
 
 
+def edit_task(hermes_bin: str, task_id: str, title: str | None = None,
+              body: str | None = None, priority: int | None = None) -> CLIResult:
+    if BRIDGE_URL:
+        return _bridge_call("PATCH", f"/kanban/tasks/{task_id}",
+                            {"title": title, "body": body, "priority": priority})
+    args = ["edit", task_id]
+    if title is not None: args += ["--title", title]
+    if body is not None: args += ["--body", body]
+    if priority is not None: args += ["--priority", str(priority)]
+    return _run(hermes_bin, *args)
+
+
+def transition_task(hermes_bin: str, task_id: str, status: str,
+                    reason: str = "Moved from Team Portal") -> CLIResult:
+    if BRIDGE_URL:
+        return _bridge_call("POST", f"/kanban/tasks/{task_id}/transition",
+                            {"status": status, "reason": reason})
+    commands = {
+        "running": ["claim", task_id],
+        "ready": ["promote", task_id],
+        "todo": ["unblock", task_id],
+        "blocked": ["block", task_id, reason],
+        "review": ["request-review", task_id, "--summary", "Moved to review from Team Portal"],
+        "done": ["complete", task_id, "--result", "Completed from Team Portal"],
+        "archived": ["archive", task_id],
+    }
+    if status not in commands:
+        return CLIResult(ok=False, stdout="", stderr=f"Unsupported status transition: {status}")
+    return _run(hermes_bin, *commands[status])
+
+
 def claim_task(hermes_bin: str, task_id: str) -> CLIResult:
     if BRIDGE_URL:
         return _bridge_call("POST", f"/kanban/tasks/{task_id}/claim")

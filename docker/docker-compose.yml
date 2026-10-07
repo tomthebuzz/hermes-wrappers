@@ -10,7 +10,7 @@ services:
       - USERS_YAML_PATH=/config/users.yaml
       - HERMES_BRIDGE_URL=http://host.docker.internal:8765
       - HERMES_BRIDGE_API_KEY=${HERMES_BRIDGE_API_KEY:?set this to the hermes-bridge service's API key}
-      - PORTAL_BASE_URL=http://localhost:8080
+      - PORTAL_BASE_URL=${PORTAL_BASE_URL:-http://localhost:8080}
       - SESSION_SECRET=${SESSION_SECRET:?set a real random secret, not the dev default}
     volumes:
       # Bind-mount the REAL kanban.db read-only. Path below assumes the
@@ -18,5 +18,5 @@ services:
       # host, and definitely adjust once this moves to Docker/K8s elsewhere
       # (Phase 4) since "~/.hermes" won't resolve the same way.
       - ${HOME}/.hermes/kanban.db:/data/kanban.db:ro
-      - ../users.yaml:/config/users.yaml:ro
+      - ../users.yaml:/config/users.yaml  # writable: profile self-service can update telegram_username
     restart: unless-stopped
