@@ -1,6 +1,6 @@
 """
 Magic-link-via-Telegram-DM auth. No domain/widget dependency — works today
-on the tailnet, and is the bridge until futuretree.com + the real Telegram
+on the tailnet, and is the bridge until team-portal.example.com + the real Telegram
 Login Widget exist (see auth/telegram_widget.py stub).
 
 Flow:
@@ -55,7 +55,7 @@ class MagicLinkAuth:
         )
         link = f"{self._portal_base_url}/login/verify?token={token}"
         message = (
-            "FutureTree Team Portal login link (expires in "
+            "Team Portal login link (expires in "
             f"{TOKEN_TTL_SECONDS // 60} minutes):\n{link}"
         )
         if self._bridge_url:

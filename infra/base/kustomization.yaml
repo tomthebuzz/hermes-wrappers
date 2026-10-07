@@ -1,6 +1,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: futuretree
+namespace: hermes-team
 
 resources:
   - namespace.yaml
@@ -19,13 +19,13 @@ resources:
 # rename + Deployment update together when both are in the same kustomization).
 configMapGenerator:
   - name: team-shared-config
-    namespace: futuretree
+    namespace: hermes-team
     files:
       - ../../config/tenants.yaml
       - ../../config/sla-defaults.yaml
 
 secretGenerator:
   - name: team-portal-session
-    namespace: futuretree
+    namespace: hermes-team
     literals:
       - secret=CHANGE-ME-generate-with-openssl-rand-hex-32

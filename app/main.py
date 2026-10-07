@@ -1,5 +1,5 @@
 """
-FutureTree Team Portal — FastAPI app.
+Team Portal — FastAPI app.
 
 Every route (except /healthz, /login, /login/verify) MUST go through
 `require_user()` first. That dependency is the actual security boundary:
@@ -33,7 +33,7 @@ HERMES_BIN = os.environ.get("HERMES_BIN", "hermes")
 PORTAL_BASE_URL = os.environ.get("PORTAL_BASE_URL", "http://localhost:8080")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "dev-insecure-change-me")
 
-app = FastAPI(title="FutureTree Team Portal")
+app = FastAPI(title="Team Portal")
 rbac = RBAC(USERS_YAML_PATH)
 magic_link = MagicLinkAuth(
     hermes_bin=HERMES_BIN, portal_base_url=PORTAL_BASE_URL,

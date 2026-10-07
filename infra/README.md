@@ -26,12 +26,12 @@ kubectl apply -k infra/base/
    ```bash
    # session secret
    kubectl create secret generic team-portal-session \
-     --from-literal=secret=$(openssl rand -hex 32) -n futuretree \
+     --from-literal=secret=$(openssl rand -hex 32) -n hermes-team \
      --dry-run=client -o yaml | kubectl apply -f -
 
    # users.yaml (real Telegram IDs — see repo root's users.yaml.example)
    kubectl create secret generic team-portal-users \
-     --from-file=users.yaml=../../users.yaml -n futuretree \
+     --from-file=users.yaml=../../users.yaml -n hermes-team \
      --dry-run=client -o yaml | kubectl apply -f -
    ```
    `infra/base/secret-users.example.yaml` is a template to show the shape,
@@ -39,9 +39,9 @@ kubectl apply -k infra/base/
 
 4. **Ingress is Phase 4 only** — it's deliberately commented out of
    `kustomization.yaml`'s resources list. Don't uncomment it until
-   futuretree.com's DNS points at this cluster's ingress controller and a
+   team-portal.example.com's DNS points at this cluster's ingress controller and a
    cert-manager ClusterIssuer actually exists. Until then, reach the
-   Service via `kubectl port-forward svc/team-portal 8080:80 -n futuretree`
+   Service via `kubectl port-forward svc/team-portal 8080:80 -n hermes-team`
    or a tailnet-exposed NodePort.
 
 5. **Shared config drift** — `configMapGenerator` in `kustomization.yaml`
@@ -59,5 +59,5 @@ magic-link auth module keeps its pending-token store in process memory
 (see `app/auth/magic_link.py`). Scaling to >1 replica today means a login
 link issued by one pod can fail verification on another. Fix before
 scaling: move that store to Redis (or switch to the Telegram Login Widget
-once futuretree.com exists, which doesn't need server-side pending state
+once team-portal.example.com exists, which doesn't need server-side pending state
 the same way).

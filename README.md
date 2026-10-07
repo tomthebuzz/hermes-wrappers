@@ -1,4 +1,4 @@
-# FutureTree Team Portal
+# Team Portal
 
 **Deploying all three repos together? See
 [hermes-bridge/RUNBOOK.md](https://github.com/tomthebuzz/hermes-bridge/blob/main/RUNBOOK.md)
@@ -12,7 +12,7 @@ unauthenticated by design (confirmed in Hermes Kanban docs — the dashboard's
 auth middleware explicitly skips `/api/plugins/*`, assuming localhost-only
 binding). This app can't inherit that assumption since it's meant to be
 reachable by 8-12 external people and eventually a public domain
-(futuretree.com), so it does its own auth and its own RBAC from scratch.
+(team-portal.example.com), so it does its own auth and its own RBAC from scratch.
 
 ## Hermes Bridge (write path)
 
@@ -49,7 +49,7 @@ not a finished product.
     Telegram username/ID, the portal calls `hermes send telegram` (or the
     person's known chat_id) to DM a one-time token, they click the link.
     No domain/widget dependency — works today on the tailnet.
-  - `telegram_login_widget` (switch to this once futuretree.com is live):
+  - `telegram_login_widget` (switch to this once team-portal.example.com is live):
     standard Telegram Login Widget flow, needs `/setdomain` in BotFather
     pointed at the real domain first.
 - **RBAC**: a small `users.yaml` (see `app/rbac.py`) maps
@@ -95,7 +95,7 @@ team-portal/
 - Phase 3: no portal changes — that phase is the bot roster / Telegram
   wiring, lives entirely in the other repo.
 - Phase 4: swap `auth_backend: telegram_login_widget` in config once
-  futuretree.com + BotFather /setdomain are live; point `KANBAN_DB_PATH` /
+  team-portal.example.com + BotFather /setdomain are live; point `KANBAN_DB_PATH` /
   `HERMES_BIN` env vars at the production host.
 
 ## K8s deployment
