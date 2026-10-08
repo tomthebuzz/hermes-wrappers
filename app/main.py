@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 
 import yaml
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
@@ -215,7 +215,9 @@ async def upload_task_attachment(task_id: str, file: UploadFile = File(...), use
 
 
 @app.get("/api/attachments/{attachment_id}")
-def download_task_attachment(attachment_id: int, user: UserScope = Depends(require_user)):
+def download_task_attachment(
+    attachment_id: int, download: bool = Query(False), user: UserScope = Depends(require_user)
+):
     attachment = kanban_read.get_attachment(KANBAN_DB_PATH, attachment_id)
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
@@ -230,8 +232,11 @@ def download_task_attachment(attachment_id: int, user: UserScope = Depends(requi
         raise HTTPException(status_code=404, detail="Attachment unavailable")
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="Attachment file is not mounted in the portal")
+    content_type = attachment.get("content_type") or "application/octet-stream"
+    previewable = content_type == "application/pdf" or content_type.startswith(("image/", "text/"))
+    disposition = "attachment" if download or not previewable else "inline"
     return FileResponse(candidate, filename=attachment["filename"],
-                        media_type=attachment.get("content_type") or "application/octet-stream")
+                        media_type=content_type, content_disposition_type=disposition)
 
 
 class CommentRequest(BaseModel):
@@ -320,17 +325,23 @@ def transition_task(task_id: str, body: TransitionTaskRequest, user: UserScope =
         raise HTTPException(status_code=403, detail="Not in your scope")
     if body.status == "done" and not user.can_approve_tenant(task.get("tenant", "")):
         raise HTTPException(status_code=403, detail="Only an artifact reviewer can complete this task")
-    result = kanban_write.transition_task(HERMES_BIN, task_id, body.status, body.reason)
+    result = kanban_write.transition_task(
+        HERMES_BIN, task_id, body.status, body.reason, task.get("status")
+    )
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
-    return {"ok": True}
+    return {"ok": True, "detail": result.stdout[:1000]}
 
 
 @app.post("/api/tasks/{task_id}/claim")
 def claim_task(task_id: str, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
-    if task is None or not user.can_read_tenant(task.get("tenant", "")):
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if not user.can_read_tenant(task.get("tenant", "")):
         raise HTTPException(status_code=403, detail="Not in your scope")
+    if task.get("status") != "ready":
+        raise HTTPException(status_code=409, detail=f"Only Ready tasks can be claimed; this task is {task.get('status')}. Move it to Ready first.")
     result = kanban_write.claim_task(HERMES_BIN, task_id)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])

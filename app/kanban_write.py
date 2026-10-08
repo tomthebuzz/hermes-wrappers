@@ -46,8 +46,19 @@ def _bridge_call(method: str, path: str, json_body: Optional[dict] = None) -> CL
     except httpx.HTTPError as e:
         return CLIResult(ok=False, stdout="", stderr=f"bridge request failed: {e}")
     if resp.status_code >= 300:
-        return CLIResult(ok=False, stdout="", stderr=resp.text)
-    return CLIResult(ok=True, stdout=resp.text, stderr="")
+        try:
+            detail = resp.json().get("detail", resp.text)
+            if isinstance(detail, dict):
+                detail = detail.get("detail", detail)
+        except (ValueError, AttributeError):
+            detail = resp.text
+        return CLIResult(ok=False, stdout="", stderr=str(detail))
+    try:
+        payload = resp.json()
+        detail = payload.get("detail", resp.text) if isinstance(payload, dict) else resp.text
+    except (ValueError, AttributeError):
+        detail = resp.text
+    return CLIResult(ok=True, stdout=str(detail), stderr="")
 
 
 def _run(hermes_bin: str, *args: str) -> CLIResult:
@@ -112,22 +123,42 @@ def edit_task(hermes_bin: str, task_id: str, title: str | None = None,
 
 
 def transition_task(hermes_bin: str, task_id: str, status: str,
-                    reason: str = "Moved from Team Portal") -> CLIResult:
+                    reason: str = "Moved from Team Portal",
+                    current_status: str | None = None) -> CLIResult:
     if BRIDGE_URL:
         return _bridge_call("POST", f"/kanban/tasks/{task_id}/transition",
-                            {"status": status, "reason": reason})
-    commands = {
-        "running": ["claim", task_id],
-        "ready": ["promote", task_id],
-        "todo": ["unblock", task_id],
-        "blocked": ["block", task_id, reason],
-        "review": ["request-review", task_id, "--summary", "Moved to review from Team Portal"],
-        "done": ["complete", task_id, "--result", "Completed from Team Portal"],
-        "archived": ["archive", task_id],
-    }
-    if status not in commands:
-        return CLIResult(ok=False, stdout="", stderr=f"Unsupported status transition: {status}")
-    return _run(hermes_bin, *commands[status])
+                            {"status": status, "reason": reason, "current_status": current_status})
+    if current_status == status:
+        return CLIResult(True, f"Task {task_id} is already {status}", "")
+    if status == "running" and current_status == "review":
+        reopened = _run(hermes_bin, "reopen-review", task_id, "--reason", reason)
+        return _run(hermes_bin, "claim", task_id) if reopened.ok else reopened
+    if status == "running" and current_status in {"todo", "blocked"}:
+        promoted = _run(hermes_bin, "promote", task_id)
+        return _run(hermes_bin, "claim", task_id) if promoted.ok else promoted
+    if status == "running" and current_status == "ready":
+        return _run(hermes_bin, "claim", task_id)
+    if status == "ready" and current_status == "running":
+        return _run(hermes_bin, "reclaim", task_id, "--reason", reason)
+    if status == "ready" and current_status == "review":
+        return _run(hermes_bin, "reopen-review", task_id, "--reason", reason)
+    if status == "ready" and current_status in {"todo", "blocked"}:
+        return _run(hermes_bin, "promote", task_id, reason)
+    if status == "todo" and current_status == "review":
+        return _run(hermes_bin, "reopen-review", task_id, "--reason", reason)
+    if status == "todo" and current_status == "blocked":
+        return _run(hermes_bin, "unblock", task_id, "--reason", reason)
+    if status == "todo" and current_status == "running":
+        return _run(hermes_bin, "reclaim", task_id, "--reason", reason)
+    if status == "blocked" and current_status in {"running", "ready"}:
+        return _run(hermes_bin, "block", task_id, reason)
+    if status == "review" and current_status in {"running", "ready"}:
+        return _run(hermes_bin, "request-review", task_id, "--summary", reason)
+    if status == "done" and current_status in {"running", "ready", "review"}:
+        return _run(hermes_bin, "complete", task_id, "--result", "Completed from Team Portal")
+    if status == "archived":
+        return _run(hermes_bin, "archive", task_id)
+    return CLIResult(False, "", f"Cannot move {task_id} from {current_status or 'unknown'} to {status} using a supported Hermes transition.")
 
 
 def claim_task(hermes_bin: str, task_id: str) -> CLIResult:
