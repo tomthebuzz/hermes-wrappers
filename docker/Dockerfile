@@ -6,6 +6,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+# Shared tenant/SLA config read by app/config_loader.py (SHARED_CONFIG_DIR
+# overrides it, e.g. a K8s ConfigMap mount).
+COPY config ./config
 
 # TODO (Phase 1 blocker to resolve before real deploy): `hermes kanban`
 # write-path commands now route through the hermes-bridge service (see
