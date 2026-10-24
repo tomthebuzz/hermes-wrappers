@@ -1,5 +1,5 @@
 """
-Read-only access to ~/.hermes/kanban.db.
+Read-only access to the Hermes board's kanban.db.
 
 Verified against the live Hermes Kanban schema pasted from the Mac mini:
   - tasks has no updated_at column; we synthesize one from the latest
@@ -12,16 +12,31 @@ All writes still go through hermes-bridge / `hermes kanban`, never raw SQL.
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 from typing import Optional
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
+def _connect(db_path: Path, attempts: int = 8) -> sqlite3.Connection:
     # Read-only URI connection — refuses to write even if a query tried to.
+    # A read-only WAL reader cannot create kanban.db-wal/-shm, so opening in
+    # the instant a host writer's last connection checkpoints and swaps them
+    # fails with "unable to open database file"; through Docker's file
+    # sharing that window is long enough to hit right after a board move.
     uri = f"file:{db_path}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=5.0)
-    conn.row_factory = sqlite3.Row
-    return conn
+    for attempt in range(attempts):
+        conn = sqlite3.connect(uri, uri=True, timeout=5.0)
+        try:
+            conn.execute("SELECT 1 FROM sqlite_master LIMIT 1")
+        except sqlite3.OperationalError as e:
+            conn.close()
+            if "unable to open" not in str(e) or attempt == attempts - 1:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+            continue
+        conn.row_factory = sqlite3.Row
+        return conn
+    raise AssertionError("unreachable")
 
 
 def list_tasks(db_path: Path, tenants: Optional[list] = None, status: Optional[str] = None) -> list[dict]:
