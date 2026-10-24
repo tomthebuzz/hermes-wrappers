@@ -401,7 +401,7 @@ def publish_artifact(body: PublishArtifactRequest, user: UserScope = Depends(req
         raise HTTPException(status_code=403, detail="Not in your scope")
     hours = body.sla_hours if body.sla_hours is not None else config_loader.default_sla_hours()
     marker = make_deadline_marker(hours)
-    kanban_write.comment_task(HERMES_BIN, body.task_id, marker)
+    kanban_write.comment_task(HERMES_BIN, body.task_id, marker, author=user.name)
     result = kanban_write.publish_artifact_for_review(HERMES_BIN, body.task_id, body.summary)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
