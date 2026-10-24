@@ -25,4 +25,8 @@ COPY config ./config
 
 EXPOSE 8080
 ENV PORTAL_BASE_URL=http://localhost:8080
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# PORTAL_HOST/PORTAL_LISTEN_PORT matter with network_mode: host (Linux
+# hosters), where 0.0.0.0 would expose the Portal on every host interface;
+# bind it to the tailnet IP there. Bridged networking keeps the defaults.
+ENV PORTAL_HOST=0.0.0.0 PORTAL_LISTEN_PORT=8080
+CMD ["sh", "-c", "exec uvicorn app.main:app --host \"$PORTAL_HOST\" --port \"$PORTAL_LISTEN_PORT\""]
