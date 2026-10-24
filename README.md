@@ -45,7 +45,9 @@ not a finished product.
 
 ## Architecture
 
-- **Reads** go straight against `~/.hermes/kanban.db` (SQLite, WAL mode —
+- **Reads** go straight against the board's `kanban.db`, mounted read-only as
+  the board directory `~/.hermes/kanban/boards/<KANBAN_BOARD>` (default `team`)
+  so the WAL is visible (SQLite, WAL mode —
   safe for concurrent external readers per the Hermes docs: "WAL mode means
   the read loop never blocks the dispatcher's BEGIN IMMEDIATE claim
   transactions").

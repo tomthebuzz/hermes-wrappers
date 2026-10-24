@@ -4,7 +4,9 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     ports:
-      - "8080:8080"
+      # Loopback by default; set PORTAL_BIND=0.0.0.0 (or the tailnet IP) to
+      # expose it beyond this machine.
+      - "${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-8080}:8080"
     environment:
       - KANBAN_DB_PATH=/data/kanban.db
       - KANBAN_ATTACHMENTS_ROOT=/data/attachments
@@ -14,11 +16,10 @@ services:
       - PORTAL_BASE_URL=${PORTAL_BASE_URL:-http://localhost:8080}
       - SESSION_SECRET=${SESSION_SECRET:?set a real random secret, not the dev default}
     volumes:
-      # Bind-mount the REAL kanban.db read-only. Path below assumes the
-      # default profile on a standard macOS Hermes install — adjust per
-      # host, and definitely adjust once this moves to Docker/K8s elsewhere
-      # (Phase 4) since "~/.hermes" won't resolve the same way.
-      - ${HOME}/.hermes/kanban.db:/data/kanban.db:ro
-      - ${HOME}/.hermes/kanban/attachments:/data/attachments:ro
-      - ../users.yaml:/config/users.yaml  # writable: profile self-service can update telegram_username
+      # Mount the board's DIRECTORY read-only, not kanban.db alone: SQLite
+      # keeps recent writes in kanban.db-wal, and a file-only mount hides it,
+      # so the Portal would only see changes after a checkpoint. Non-default
+      # boards keep db + attachments in their own dir, away from ~/.hermes/.env.
+      - ${HOME}/.hermes/kanban/boards/${KANBAN_BOARD:-team}:/data:ro
+      - ${USERS_YAML:-../users.yaml}:/config/users.yaml  # writable: profile self-service can update telegram_username
     restart: unless-stopped
