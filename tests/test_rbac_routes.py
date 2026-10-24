@@ -218,3 +218,11 @@ def test_only_reviewers_move_cards_out_of_review_or_archive(calls):
     finally:
         del main.rbac._by_key["556"]
     assert viewer.post("/api/tasks/t_sales1/transition", json={"status": "archived"}).status_code == 403
+
+
+def test_help_page_renders_the_guide_for_this_host():
+    from conftest import client_as
+    r = client_as(None).get("/help", headers={"host": "matrix.example.test:10000"})
+    assert r.status_code == 200 and "<table>" in r.text
+    assert "@name:matrix.example.test" in r.text and "{{HOST}}" not in r.text
+    assert 'id="whats-new"' in r.text and "/whoami" in r.text

@@ -9,6 +9,7 @@ COPY app ./app
 # Shared tenant/SLA config read by app/config_loader.py (SHARED_CONFIG_DIR
 # overrides it, e.g. a K8s ConfigMap mount).
 COPY config ./config
+COPY docs/user-guide.md ./docs/user-guide.md
 
 # TODO (Phase 1 blocker to resolve before real deploy): `hermes kanban`
 # write-path commands now route through the hermes-bridge service (see

@@ -20,6 +20,7 @@ import re
 import secrets
 from pathlib import Path
 
+import markdown
 import yaml
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -370,6 +371,35 @@ def change_password(body: PasswordChangeRequest, user: UserScope = Depends(requi
         raise HTTPException(status_code=outcome.status, detail=outcome.error)
     logger.info("password changed by %s", user.matrix_id)
     return {"ok": True}
+
+
+# --- help: docs/user-guide.md, the one guide for business users ---
+
+USER_GUIDE = Path(__file__).resolve().parents[1] / "docs" / "user-guide.md"
+HELP_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Help · Team Portal</title>
+<style>:root{{--bg:#0f1115;--panel:#171a21;--line:#303643;--text:#e7eaf0;--muted:#aab2c0}}
+body{{font:15px/1.55 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--text)}}
+header{{position:sticky;top:0;background:var(--panel);padding:14px 20px;border-bottom:1px solid var(--line)}}
+a{{color:#9ab8ff}}main{{max-width:820px;margin:0 auto;padding:8px 16px 48px}}
+h1,h2,h3{{line-height:1.25}}h2{{margin-top:2em;border-bottom:1px solid var(--line);padding-bottom:6px}}
+code{{background:#202530;padding:1px 5px;border-radius:4px;word-break:break-word}}
+table{{border-collapse:collapse;width:100%;display:block;overflow-x:auto}}
+th,td{{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}}
+.toc{{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 18px}}
+.toc ul{{padding-left:18px}}</style></head>
+<body><header><a href="/">← Team Portal</a></header><main>{body}</main></body></html>"""
+
+
+@app.get("/help", response_class=HTMLResponse)
+def help_page(request: Request):
+    """Public on purpose: people read it before their first sign-in. It
+    holds no data, only how to use the Portal and Matrix; {{HOST}} becomes
+    the server name the reader reached."""
+    host = html.escape(request.url.hostname or "your-server")
+    body = markdown.markdown(USER_GUIDE.read_text().replace("{{HOST}}", host),
+                             extensions=["tables", "toc", "fenced_code"])
+    return HTMLResponse(HELP_PAGE.format(body=body), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/", response_class=HTMLResponse)

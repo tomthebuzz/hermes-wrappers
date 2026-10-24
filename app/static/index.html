@@ -10,9 +10,9 @@
 table.people{width:100%;border-collapse:collapse;margin:14px 0}table.people th,table.people td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}table.people input[type=checkbox]{width:18px;height:18px}.profile label{display:block}.profile input{display:block;width:100%;margin:5px 0 12px}.copyrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.copyrow code{word-break:break-all}
 </style></head>
 <body>
-<div id="login-screen"><h2>Team Portal</h2><p>Sign in with your Telegram @username or your Matrix ID (@name:server).</p><input id="login-id" placeholder="@username or @name:server"><button onclick="requestLogin()">Send login link</button><p id="login-status" class="status"></p></div>
+<div id="login-screen"><h2>Team Portal</h2><p>Sign in with your Telegram @username or your Matrix ID (@name:server).</p><input id="login-id" placeholder="@username or @name:server"><button onclick="requestLogin()">Send login link</button><p id="login-status" class="status"></p><p class="muted">New here? <a href="/help" target="_blank">Read the guide</a>.</p></div>
 <div id="app" class="hidden">
-<header><nav><a onclick="showView('board')">Kanban</a><a onclick="showView('artifacts')">Artifacts</a></nav><nav><a id="nav-people" class="hidden" onclick="showView('people')">People</a><a onclick="showView('profile')">Profile</a><a onclick="logout()">Log out</a></nav></header>
+<header><nav><a onclick="showView('board')">Kanban</a><a onclick="showView('artifacts')">Artifacts</a></nav><nav><a href="/help" target="_blank">Help</a><a id="nav-people" class="hidden" onclick="showView('people')">People</a><a onclick="showView('profile')">Profile</a><a onclick="logout()">Log out</a></nav></header>
 <main><section id="board-view"></section><section id="artifacts-view" class="hidden"></section><section id="people-view" class="hidden profile"></section><section id="profile-view" class="hidden profile"></section></main></div>
 <div id="toast" class="toast" role="status" onclick="this.style.display='none'"></div>
 <div id="modal-back" class="modal-back" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
