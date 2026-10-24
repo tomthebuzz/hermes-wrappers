@@ -86,7 +86,8 @@ def create_task(hermes_bin: str, title: str, tenant: str, body: str = "",
 
 
 def upload_attachment(hermes_bin: str, task_id: str, filename: str,
-                      data: bytes, content_type: str | None = None) -> CLIResult:
+                      data: bytes, content_type: str | None = None,
+                      author: str | None = None) -> CLIResult:
     safe_name = Path(filename).name.strip()
     if not safe_name or safe_name in {".", ".."}:
         return CLIResult(False, "", "invalid filename")
@@ -96,6 +97,7 @@ def upload_attachment(hermes_bin: str, task_id: str, filename: str,
             response = httpx.post(
                 f"{BRIDGE_URL}/kanban/tasks/{task_id}/attachments",
                 files={"file": (safe_name, data, content_type or "application/octet-stream")},
+                data={"author": author} if author else None,
                 headers=headers,
                 timeout=60,
             )
@@ -107,7 +109,8 @@ def upload_attachment(hermes_bin: str, task_id: str, filename: str,
     with tempfile.TemporaryDirectory(prefix="portal-attachment-") as tmp:
         path = Path(tmp) / safe_name
         path.write_bytes(data)
-        return _run(hermes_bin, "attach", task_id, str(path))
+        author_args = [f"--author={author}"] if author else []
+        return _run(hermes_bin, "attach", *author_args, task_id, str(path))
 
 
 def edit_task(hermes_bin: str, task_id: str, title: str | None = None,

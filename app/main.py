@@ -207,7 +207,7 @@ async def upload_task_attachment(task_id: str, file: UploadFile = File(...), use
     if not data:
         raise HTTPException(status_code=400, detail="Empty files cannot be attached")
     result = kanban_write.upload_attachment(
-        HERMES_BIN, task_id, file.filename or "upload", data, file.content_type
+        HERMES_BIN, task_id, file.filename or "upload", data, file.content_type, author=user.name
     )
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
