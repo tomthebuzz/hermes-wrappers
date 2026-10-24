@@ -24,7 +24,8 @@ from pydantic import BaseModel
 
 from . import config_loader, kanban_read, kanban_write
 from .auth.magic_link import MagicLinkAuth
-from .artifacts.sla import find_deadline, find_due_date, is_overdue, make_deadline_marker, seconds_remaining
+from .artifacts.sla import (deadline_after, find_deadline, find_due_date, is_overdue, make_deadline_marker,
+                            seconds_remaining)
 from .rbac import RBAC, UserScope
 
 # --- config (env-driven, container-friendly, no hardcoded host paths) ---
@@ -161,7 +162,10 @@ def index():
     # Auth is enforced client-side by the SPA hitting /api/board and
     # redirecting to the login screen on 401 — this route just serves the
     # static shell. No session data is exposed here.
-    return FileResponse(Path(__file__).parent / "static" / "index.html")
+    # no-cache: the whole UI is this one file, so a cached copy keeps running
+    # old JS after a deploy (an old native prompt() froze a review click).
+    return FileResponse(Path(__file__).parent / "static" / "index.html",
+                        headers={"Cache-Control": "no-cache"})
 
 
 # --- kanban (read) ---
@@ -189,9 +193,26 @@ def task_detail(task_id: str, user: UserScope = Depends(require_user)):
     task["comments"] = kanban_read.list_comments(KANBAN_DB_PATH, task_id)
     task["attachments"] = kanban_read.list_attachments(KANBAN_DB_PATH, task_id)
     task["can_review"] = user.can_approve_tenant(task.get("tenant", ""))
-    task["sla_deadline"] = find_deadline(task)
+    task["sla_deadline"] = review_deadline(task) if task.get("status") == "review" else find_deadline(task)
     task["due_date"] = find_due_date(task)
     return task
+
+
+def review_deadline(task: dict) -> str | None:
+    """The SLA-DEADLINE marker the Portal's publish writes, else the default
+    SLA counted from the latest review hand-off (workers hand off directly)."""
+    marker = find_deadline(task)
+    if marker:
+        return marker
+    requested_at = kanban_read.latest_event_at(KANBAN_DB_PATH, task["id"], "review_requested")
+    return deadline_after(requested_at, config_loader.default_sla_hours()) if requested_at else None
+
+
+@app.get("/api/assignees")
+def list_assignees(user: UserScope = Depends(require_user)):
+    """Department profiles a card can be assigned to; empty when unavailable."""
+    result = kanban_write.list_assignees()
+    return {"assignees": result}
 
 
 @app.post("/api/tasks/{task_id}/attachments")
@@ -360,7 +381,7 @@ def artifact_review_queue(user: UserScope = Depends(require_user)):
     tasks = kanban_read.list_tasks(KANBAN_DB_PATH, tenants=tenants, status="review")
     for t in tasks:
         t["comments"] = kanban_read.list_comments(KANBAN_DB_PATH, t["id"])
-        deadline = find_deadline(t)
+        deadline = review_deadline(t)
         t["sla_deadline"] = deadline
         t["sla_seconds_remaining"] = seconds_remaining(deadline) if deadline else None
         t["can_review"] = user.can_approve_tenant(t.get("tenant", ""))
@@ -404,7 +425,8 @@ def review_artifact(body: ReviewDecisionRequest, user: UserScope = Depends(requi
     if body.approve:
         result = kanban_write.approve_artifact(HERMES_BIN, body.task_id, body.note)
     else:
-        result = kanban_write.reject_artifact(HERMES_BIN, body.task_id, body.note or "Changes requested.")
+        result = kanban_write.reject_artifact(HERMES_BIN, body.task_id, body.note or "Changes requested.",
+                                              author=user.name)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
     return {"ok": True}
