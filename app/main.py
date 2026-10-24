@@ -262,9 +262,18 @@ def task_detail(task_id: str, user: UserScope = Depends(require_user)):
 
 def task_skills(task: dict) -> list:
     try:
-        return json.loads(task.get("skills") or "[]")
+        skills = json.loads(task.get("skills") or "[]")
     except ValueError:
         return []
+    return [s for s in skills if isinstance(s, str)] if isinstance(skills, list) else []
+
+
+def auto_approves(task: dict) -> bool:
+    """Same rule as hermes-team's SLA sweep: autonomy level >= 3 AND the
+    tenant's own on-miss rule is approve (a skill cannot override a tenant
+    that rejects)."""
+    level = config_loader.autonomy_level(task_skills(task))
+    return level is not None and level >= 3 and config_loader.on_miss_direction(task.get("tenant", "")) == "approve"
 
 
 def review_deadline(task: dict) -> str | None:
@@ -272,8 +281,7 @@ def review_deadline(task: dict) -> str | None:
     SLA counted from the latest review hand-off (workers hand off directly).
     A skill-tagged card at autonomy level >= 3 auto-approves when its veto
     window closes, so that is its deadline (same rule as the SLA sweep)."""
-    level = config_loader.autonomy_level(task_skills(task))
-    if level is not None and level >= 3:
+    if auto_approves(task):
         requested_at = kanban_read.latest_event_at(KANBAN_DB_PATH, task["id"], "review_requested")
         return deadline_after(requested_at, config_loader.veto_window_hours()) if requested_at else None
     requested_at = kanban_read.latest_event_at(KANBAN_DB_PATH, task["id"], "review_requested")
@@ -500,6 +508,7 @@ def artifact_review_queue(user: UserScope = Depends(require_user)):
         t["sla_seconds_remaining"] = seconds_remaining(deadline) if deadline else None
         t["can_review"] = user.can_approve_tenant(t.get("tenant", ""))
         t["autonomy_level"] = config_loader.autonomy_level(task_skills(t))
+        t["auto_approves"] = auto_approves(t)
     return {"tasks": tasks}
 
 
