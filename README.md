@@ -137,6 +137,10 @@ ingress timing) rather than silently assumed.
    bridge reports a send failure; also check `/tmp/hermes-bridge.log` and make
    sure the user has started the Telegram bot at least once.
 
+## For users
+
+`docs/user-guide.md`: sign-in, the board, reviewing drafts, the department room — written for the business users.
+
 ## Tests
 
 ```bash
