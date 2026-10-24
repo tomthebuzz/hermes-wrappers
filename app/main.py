@@ -223,10 +223,10 @@ def index():
     # Auth is enforced client-side by the SPA hitting /api/board and
     # redirecting to the login screen on 401 — this route just serves the
     # static shell. No session data is exposed here.
-    # no-cache: the whole UI is this one file, so a cached copy keeps running
+    # no-store: the whole UI is this one file, so a cached copy keeps running
     # old JS after a deploy (an old native prompt() froze a review click).
     return FileResponse(Path(__file__).parent / "static" / "index.html",
-                        headers={"Cache-Control": "no-cache"})
+                        headers={"Cache-Control": "no-store"})
 
 
 # --- kanban (read) ---

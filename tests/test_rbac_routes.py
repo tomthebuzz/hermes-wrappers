@@ -113,7 +113,7 @@ def test_matrix_only_user_cannot_edit_a_telegram_handle(mia):
 
 
 def test_index_is_never_cached(calls):
-    assert client_as(None).get("/").headers["cache-control"] == "no-cache"
+    assert client_as(None).get("/").headers["cache-control"] == "no-store"
 
 
 def test_approval_credits_the_approver(alice, calls):
