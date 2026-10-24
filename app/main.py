@@ -3,7 +3,7 @@ Team Portal — FastAPI app.
 
 Every route (except /healthz, /login, /login/verify) MUST go through
 `require_user()` first. That dependency is the actual security boundary:
-it resolves the session cookie -> telegram_user_id -> RBAC.UserScope, and
+it resolves the session cookie -> user key -> RBAC.UserScope, and
 every subsequent handler uses that scope to decide what tenants/tasks are
 visible. There is no "admin bypass" path in this file on purpose.
 
@@ -23,7 +23,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
 
 from . import config_loader, kanban_read, kanban_write
-from .auth.magic_link import MagicLinkAuth
+from .auth.magic_link import MagicLinkAuth, MatrixDM
 from .artifacts.sla import (deadline_after, find_deadline, find_due_date, is_overdue, make_deadline_marker,
                             seconds_remaining)
 from .rbac import RBAC, UserScope
@@ -38,10 +38,15 @@ SESSION_SECRET = os.environ.get("SESSION_SECRET", "dev-insecure-change-me")
 
 app = FastAPI(title="Team Portal")
 rbac = RBAC(USERS_YAML_PATH)
+PORTAL_AUTH_BACKEND = os.environ.get("PORTAL_AUTH_BACKEND", "magic_link_telegram")
+matrix_dm = None
+if PORTAL_AUTH_BACKEND == "magic_link_matrix":
+    matrix_dm = MatrixDM(os.environ["MATRIX_HOMESERVER"], os.environ["MATRIX_PORTAL_TOKEN"])
 magic_link = MagicLinkAuth(
     hermes_bin=HERMES_BIN, portal_base_url=PORTAL_BASE_URL,
     bridge_url=os.environ.get("HERMES_BRIDGE_URL"),
     bridge_api_key=os.environ.get("HERMES_BRIDGE_API_KEY"),
+    matrix=matrix_dm,
 )
 signer = URLSafeTimedSerializer(SESSION_SECRET, salt="team-portal-session")
 
@@ -54,10 +59,10 @@ def require_user(request: Request) -> UserScope:
     if not raw:
         raise HTTPException(status_code=401, detail="Not logged in")
     try:
-        telegram_user_id = signer.loads(raw, max_age=SESSION_MAX_AGE)
+        user_key = signer.loads(raw, max_age=SESSION_MAX_AGE)
     except BadSignature:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
-    scope = rbac.get(int(telegram_user_id))
+    scope = rbac.get(user_key)
     if scope is None:
         # Fail closed: a valid session for an unknown/removed user gets nothing.
         raise HTTPException(status_code=403, detail="No access configured for this user")
@@ -85,18 +90,19 @@ def login(body: LoginRequest):
         # Deliberately vague error — don't let this endpoint be used to
         # enumerate which Telegram handles/IDs are provisioned.
         raise HTTPException(status_code=400, detail="Could not send login link")
-    result = magic_link.issue(scope.telegram_user_id, scope.delivery_target)
+    result = magic_link.issue(scope)
+    channel = "Matrix" if matrix_dm and scope.matrix_id else "Telegram"
     if not result.delivered:
-        raise HTTPException(status_code=502, detail=f"Could not deliver Telegram login link: {result.error}")
-    return {"status": "sent", "note": "Check Telegram for a login link."}
+        raise HTTPException(status_code=502, detail=f"Could not deliver {channel} login link: {result.error}")
+    return {"status": "sent", "note": f"Check {channel} for a login link."}
 
 
 @app.get("/login/verify")
 def login_verify(token: str):
-    telegram_user_id = magic_link.verify(token)
-    if telegram_user_id is None:
+    user_key = magic_link.verify(token)
+    if user_key is None:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
-    session_value = signer.dumps(telegram_user_id)
+    session_value = signer.dumps(user_key)
     response = RedirectResponse(url="/")
     response.set_cookie(
         SESSION_COOKIE, session_value,
@@ -120,7 +126,8 @@ def profile(user: UserScope = Depends(require_user)):
         "role": user.role,
         "telegram_username": user.telegram_username,
         "telegram_user_id": user.telegram_user_id,
-        "telegram_chat_id": user.telegram_chat_id or str(user.telegram_user_id),
+        "telegram_chat_id": user.telegram_chat_id or (str(user.telegram_user_id) if user.telegram_user_id else None),
+        "matrix_id": user.matrix_id,
         "tenants": list(user.tenants),
         "can_rollup": user.can_rollup,
         "can_approve_artifacts": list(user.can_approve_artifacts),
@@ -133,18 +140,20 @@ class ProfileUpdateRequest(BaseModel):
 
 @app.patch("/api/profile")
 def update_profile(body: ProfileUpdateRequest, user: UserScope = Depends(require_user)):
+    if user.telegram_user_id is None:
+        raise HTTPException(status_code=409, detail="This account signs in with Matrix; it has no Telegram username")
     username = body.telegram_username.strip().removeprefix("@").lower()
     if not username or len(username) > 32 or not username.replace("_", "").isalnum():
         raise HTTPException(status_code=422, detail="Enter a valid Telegram username without @")
     try:
         data = yaml.safe_load(USERS_YAML_PATH.read_text()) or {}
         entries = data.get("users", [])
-        target = next((e for e in entries if int(e.get("telegram_user_id", -1)) == user.telegram_user_id), None)
+        target = next((e for e in entries if e.get("telegram_user_id") == user.telegram_user_id), None)
         if target is None:
             raise HTTPException(status_code=409, detail="User entry is no longer configured")
         for entry in entries:
             existing = str(entry.get("telegram_username", "")).strip().removeprefix("@").lower()
-            if existing == username and int(entry.get("telegram_user_id", -1)) != user.telegram_user_id:
+            if existing == username and entry.get("telegram_user_id") != user.telegram_user_id:
                 raise HTTPException(status_code=409, detail="That Telegram username is already assigned")
         target["telegram_username"] = username
         # users.yaml is mounted as a single writable Docker file. Replace its

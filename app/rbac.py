@@ -14,6 +14,8 @@ therefore supports both:
   - telegram_username: user-facing login handle ("@alice" or "alice")
   - telegram_user_id: stable numeric ID used for the session key
   - telegram_chat_id: optional delivery target; defaults to telegram_user_id
+  - matrix_id: optional "@alice:server"; login handle and DM target for the
+    magic_link_matrix backend. A Matrix-only user may omit the telegram_* keys.
 """
 from __future__ import annotations
 
@@ -35,9 +37,17 @@ def normalize_username(value: str | None) -> str | None:
     return v.lower()
 
 
+def normalize_matrix_id(value: str | None) -> str | None:
+    """'@alice:server' (case-insensitive localpart and server); None otherwise."""
+    v = str(value or "").strip()
+    if not (v.startswith("@") and ":" in v[2:]):
+        return None
+    return v.lower()
+
+
 @dataclasses.dataclass(frozen=True)
 class UserScope:
-    telegram_user_id: int
+    telegram_user_id: int | None
     name: str
     role: str
     tenants: tuple
@@ -45,6 +55,13 @@ class UserScope:
     can_approve_artifacts: tuple
     telegram_username: str | None = None
     telegram_chat_id: str | None = None
+    matrix_id: str | None = None
+
+    @property
+    def key(self) -> str:
+        """Stable session key: the numeric Telegram ID when there is one (so
+        existing sessions stay valid), else the Matrix ID."""
+        return str(self.telegram_user_id) if self.telegram_user_id is not None else str(self.matrix_id)
 
     @property
     def delivery_target(self) -> str:
@@ -68,8 +85,9 @@ class UserScope:
 class RBAC:
     def __init__(self, users_yaml_path: Path):
         self._path = users_yaml_path
-        self._by_id: dict[int, UserScope] = {}
+        self._by_key: dict[str, UserScope] = {}
         self._by_username: dict[str, UserScope] = {}
+        self._by_matrix: dict[str, UserScope] = {}
         self.reload()
 
     def reload(self) -> None:
@@ -79,12 +97,17 @@ class RBAC:
                 "and fill in real Telegram IDs/usernames before starting the portal."
             )
         data = yaml.safe_load(self._path.read_text()) or {}
-        by_id: dict[int, UserScope] = {}
+        by_key: dict[str, UserScope] = {}
         by_username: dict[str, UserScope] = {}
+        by_matrix: dict[str, UserScope] = {}
         for entry in data.get("users", []):
             username = normalize_username(entry.get("telegram_username"))
+            matrix_id = normalize_matrix_id(entry.get("matrix_id"))
+            if entry.get("telegram_user_id") is None and matrix_id is None:
+                raise ValueError(f"users.yaml entry {entry.get('name', '?')!r} needs telegram_user_id or matrix_id")
             scope = UserScope(
-                telegram_user_id=int(entry["telegram_user_id"]),
+                telegram_user_id=int(entry["telegram_user_id"]) if entry.get("telegram_user_id") is not None else None,
+                matrix_id=matrix_id,
                 telegram_username=username,
                 telegram_chat_id=str(entry.get("telegram_chat_id")) if entry.get("telegram_chat_id") else None,
                 name=entry.get("name", "Unknown"),
@@ -93,14 +116,17 @@ class RBAC:
                 can_rollup=bool(entry.get("can_rollup", False)),
                 can_approve_artifacts=tuple(entry.get("can_approve_artifacts", [])),
             )
-            by_id[scope.telegram_user_id] = scope
+            by_key[scope.key] = scope
             if username:
                 by_username[username] = scope
-        self._by_id = by_id
+            if matrix_id:
+                by_matrix[matrix_id] = scope
+        self._by_key = by_key
         self._by_username = by_username
+        self._by_matrix = by_matrix
 
-    def get(self, telegram_user_id: int) -> Optional[UserScope]:
-        return self._by_id.get(telegram_user_id)
+    def get(self, key: str | int) -> Optional[UserScope]:
+        return self._by_key.get(str(key))
 
     def resolve_login(self, login: str) -> Optional[UserScope]:
         """Resolve a login string: @username preferred, numeric ID accepted
@@ -108,10 +134,13 @@ class RBAC:
         raw = str(login).strip()
         if not raw:
             return None
+        matrix_id = normalize_matrix_id(raw)
+        if matrix_id:
+            return self._by_matrix.get(matrix_id)
         username = normalize_username(raw)
         if username and not raw.isdigit():
             return self._by_username.get(username)
         try:
-            return self._by_id.get(int(raw))
+            return self._by_key.get(str(int(raw)))
         except ValueError:
             return self._by_username.get(username) if username else None

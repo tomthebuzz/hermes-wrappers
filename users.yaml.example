@@ -41,6 +41,15 @@ users:
     can_rollup: true
     can_approve_artifacts: [finance, leadership]
 
+  # Matrix-only user (PORTAL_AUTH_BACKEND=magic_link_matrix): the login link is
+  # DMed by the Portal's @portal bot; telegram_* keys may be omitted.
+  - matrix_id: "@example_ops:matrix.example.org"
+    name: "Example Ops Lead"
+    role: ops
+    tenants: [ops]
+    can_rollup: false
+    can_approve_artifacts: [ops]
+
   - telegram_username: example_marketing
     telegram_user_id: 100000004
     telegram_chat_id: 100000004

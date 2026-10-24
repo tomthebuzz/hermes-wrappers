@@ -9,7 +9,7 @@
 .toast{position:fixed;right:16px;bottom:16px;z-index:20;max-width:min(420px,calc(100% - 32px));background:var(--panel2);border:1px solid var(--line);border-left:4px solid var(--red);border-radius:8px;padding:12px 14px;display:none}.toast.ok{border-left-color:var(--blue)}
 </style></head>
 <body>
-<div id="login-screen"><h2>Team Portal</h2><p>Sign in with your Telegram @username.</p><input id="login-id" placeholder="@username"><button onclick="requestLogin()">Send login link</button><p id="login-status" class="status"></p></div>
+<div id="login-screen"><h2>Team Portal</h2><p>Sign in with your Telegram @username or your Matrix ID (@name:server).</p><input id="login-id" placeholder="@username or @name:server"><button onclick="requestLogin()">Send login link</button><p id="login-status" class="status"></p></div>
 <div id="app" class="hidden">
 <header><nav><a onclick="showView('board')">Kanban</a><a onclick="showView('artifacts')">Artifacts</a></nav><nav><a onclick="showView('profile')">Profile</a><a onclick="logout()">Log out</a></nav></header>
 <main><section id="board-view"></section><section id="artifacts-view" class="hidden"></section><section id="profile-view" class="hidden profile"></section></main></div>
