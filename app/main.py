@@ -12,6 +12,7 @@ checklist before trusting this beyond a local smoke test.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -203,13 +204,27 @@ def task_detail(task_id: str, user: UserScope = Depends(require_user)):
     task["attachments"] = kanban_read.list_attachments(KANBAN_DB_PATH, task_id)
     task["can_review"] = user.can_approve_tenant(task.get("tenant", ""))
     task["sla_deadline"] = review_deadline(task) if task.get("status") == "review" else find_deadline(task)
+    task["autonomy_level"] = config_loader.autonomy_level(task_skills(task))
     task["due_date"] = find_due_date(task)
     return task
 
 
+def task_skills(task: dict) -> list:
+    try:
+        return json.loads(task.get("skills") or "[]")
+    except ValueError:
+        return []
+
+
 def review_deadline(task: dict) -> str | None:
     """The SLA-DEADLINE marker the Portal's publish writes, else the default
-    SLA counted from the latest review hand-off (workers hand off directly)."""
+    SLA counted from the latest review hand-off (workers hand off directly).
+    A skill-tagged card at autonomy level >= 3 auto-approves when its veto
+    window closes, so that is its deadline (same rule as the SLA sweep)."""
+    level = config_loader.autonomy_level(task_skills(task))
+    if level is not None and level >= 3:
+        requested_at = kanban_read.latest_event_at(KANBAN_DB_PATH, task["id"], "review_requested")
+        return deadline_after(requested_at, config_loader.veto_window_hours()) if requested_at else None
     marker = find_deadline(task)
     if marker:
         return marker
@@ -394,6 +409,7 @@ def artifact_review_queue(user: UserScope = Depends(require_user)):
         t["sla_deadline"] = deadline
         t["sla_seconds_remaining"] = seconds_remaining(deadline) if deadline else None
         t["can_review"] = user.can_approve_tenant(t.get("tenant", ""))
+        t["autonomy_level"] = config_loader.autonomy_level(task_skills(t))
     return {"tasks": tasks}
 
 

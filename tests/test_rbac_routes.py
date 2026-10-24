@@ -124,3 +124,22 @@ def test_approval_credits_the_approver(alice, calls):
 def test_drag_to_done_credits_the_approver(alice, calls):
     assert alice.post("/api/tasks/t_tech2/transition", json={"status": "done"}).status_code == 200
     assert calls[0][0] == "transition_task" and calls[0][2] == {"author": "Alice Tech"}
+
+
+def test_autonomy_level_drives_deadline_and_label(alice, monkeypatch, tmp_path):
+    import json, sqlite3
+    from conftest import DB
+    ladder = tmp_path / "autonomy.yaml"
+    ladder.write_text("defaults: {level: 1, veto_window_hours: 24}\nskills:\n  research: {level: 3, ceiling: 4}\n")
+    monkeypatch.setenv("AUTONOMY_PATH", str(ladder))
+    with sqlite3.connect(DB) as conn:
+        conn.execute("UPDATE tasks SET skills=? WHERE id='t_tech1'", (json.dumps(["research"]),))
+    try:
+        card = alice.get("/api/artifacts").json()["tasks"][0]
+        assert card["autonomy_level"] == 3
+        assert card["sla_deadline"] == "2026-09-22T14:13:20Z"   # hand-off + 24 h veto window
+        monkeypatch.delenv("AUTONOMY_PATH")
+        assert alice.get("/api/artifacts").json()["tasks"][0]["autonomy_level"] is None
+    finally:
+        with sqlite3.connect(DB) as conn:
+            conn.execute("UPDATE tasks SET skills=NULL WHERE id='t_tech1'")

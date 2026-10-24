@@ -23,6 +23,29 @@ def load_sla_defaults() -> dict:
     return yaml.safe_load((CONFIG_DIR / "sla-defaults.yaml").read_text())
 
 
+def load_autonomy() -> dict:
+    """The client's autonomy ladder (harness-kit clients/<client>/autonomy.yaml,
+    mounted at AUTONOMY_PATH); {} when not configured."""
+    path = os.environ.get("AUTONOMY_PATH")
+    if not path or not Path(path).exists():
+        return {}
+    return yaml.safe_load(Path(path).read_text()) or {}
+
+
+def autonomy_level(skills: list) -> int | None:
+    """Lowest level among the skills (the most careful wins, same rule as
+    hermes-team's SLA sweep); None without skills or without a ladder."""
+    ladder = load_autonomy()
+    if not ladder or not skills:
+        return None
+    default = (ladder.get("defaults") or {}).get("level", 1)
+    return min(int(((ladder.get("skills") or {}).get(s) or {}).get("level", default)) for s in skills)
+
+
+def veto_window_hours() -> float:
+    return float((load_autonomy().get("defaults") or {}).get("veto_window_hours", 24))
+
+
 def default_sla_hours() -> float:
     return float(load_sla_defaults().get("default_hours", 48))
 
