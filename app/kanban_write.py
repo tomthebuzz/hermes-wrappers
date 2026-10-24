@@ -127,10 +127,11 @@ def edit_task(hermes_bin: str, task_id: str, title: str | None = None,
 
 def transition_task(hermes_bin: str, task_id: str, status: str,
                     reason: str = "Moved from Team Portal",
-                    current_status: str | None = None) -> CLIResult:
+                    current_status: str | None = None, author: str | None = None) -> CLIResult:
     if BRIDGE_URL:
         return _bridge_call("POST", f"/kanban/tasks/{task_id}/transition",
-                            {"status": status, "reason": reason, "current_status": current_status})
+                            {"status": status, "reason": reason, "current_status": current_status,
+                             "author": author})
     if current_status == status:
         return CLIResult(True, f"Task {task_id} is already {status}", "")
     if status == "running" and current_status == "review":
@@ -185,10 +186,12 @@ def comment_task(hermes_bin: str, task_id: str, text: str, author: Optional[str]
     return _run(hermes_bin, *args)
 
 
-def approve_artifact(hermes_bin: str, task_id: str, note: str = "") -> CLIResult:
-    """Approve == complete the review-lane card."""
+def approve_artifact(hermes_bin: str, task_id: str, note: str = "", author: str | None = None) -> CLIResult:
+    """Approve == complete the review-lane card, attributed to the approver."""
     if BRIDGE_URL:
-        return _bridge_call("POST", f"/kanban/tasks/{task_id}/approve", {"note": note})
+        return _bridge_call("POST", f"/kanban/tasks/{task_id}/approve", {"note": note, "author": author})
+    if author:
+        note = f"Approved by {author}" + (f": {note}" if note else "")
     args = ["complete", task_id]
     if note:
         args += ["--result", note]

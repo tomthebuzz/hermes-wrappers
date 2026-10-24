@@ -356,7 +356,7 @@ def transition_task(task_id: str, body: TransitionTaskRequest, user: UserScope =
     if body.status == "done" and not user.can_approve_tenant(task.get("tenant", "")):
         raise HTTPException(status_code=403, detail="Only an artifact reviewer can complete this task")
     result = kanban_write.transition_task(
-        HERMES_BIN, task_id, body.status, body.reason, task.get("status")
+        HERMES_BIN, task_id, body.status, body.reason, task.get("status"), author=user.name
     )
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
@@ -432,7 +432,7 @@ def review_artifact(body: ReviewDecisionRequest, user: UserScope = Depends(requi
     if not user.can_approve_tenant(tenant):
         raise HTTPException(status_code=403, detail="Not authorized to review this tenant's artifacts")
     if body.approve:
-        result = kanban_write.approve_artifact(HERMES_BIN, body.task_id, body.note)
+        result = kanban_write.approve_artifact(HERMES_BIN, body.task_id, body.note, author=user.name)
     else:
         result = kanban_write.reject_artifact(HERMES_BIN, body.task_id, body.note or "Changes requested.",
                                               author=user.name)

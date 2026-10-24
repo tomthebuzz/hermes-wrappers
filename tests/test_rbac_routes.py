@@ -114,3 +114,13 @@ def test_matrix_only_user_cannot_edit_a_telegram_handle(mia):
 
 def test_index_is_never_cached(calls):
     assert client_as(None).get("/").headers["cache-control"] == "no-cache"
+
+
+def test_approval_credits_the_approver(alice, calls):
+    assert alice.post("/api/artifacts/review", json={"task_id": "t_tech1", "approve": True, "note": "ok"}).status_code == 200
+    assert calls == [("approve_artifact", ("t_tech1", "ok"), {"author": "Alice Tech"})]
+
+
+def test_drag_to_done_credits_the_approver(alice, calls):
+    assert alice.post("/api/tasks/t_tech2/transition", json={"status": "done"}).status_code == 200
+    assert calls[0][0] == "transition_task" and calls[0][2] == {"author": "Alice Tech"}
