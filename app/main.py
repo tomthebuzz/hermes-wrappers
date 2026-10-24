@@ -16,6 +16,7 @@ import html
 import json
 import logging
 import os
+import re
 import secrets
 from pathlib import Path
 
@@ -45,6 +46,19 @@ if len(SESSION_SECRET) < 16 or SESSION_SECRET == "dev-insecure-change-me":
 
 app = FastAPI(title="Team Portal")
 logger = logging.getLogger("team_portal")
+
+
+class _RedactTokens(logging.Filter):
+    """uvicorn's access log would record /login/verify?token=… — a usable
+    sign-in until the link is opened."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args:
+            record.args = tuple(re.sub(r"token=[^&\s]+", "token=<redacted>", a) if isinstance(a, str) else a
+                                for a in record.args)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_RedactTokens())
 rbac = RBAC(USERS_YAML_PATH)
 PORTAL_AUTH_BACKEND = os.environ.get("PORTAL_AUTH_BACKEND", "magic_link_telegram")
 matrix_dm = None

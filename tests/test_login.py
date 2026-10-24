@@ -136,3 +136,11 @@ def test_dm_never_overwrites_the_dm_list_on_a_read_error():
     with pytest.raises(RuntimeError):
         dm_with(hs).send("@mia:hs", "link")
     assert hs.put_direct is None and hs.sent == []
+
+
+def test_access_log_never_holds_login_tokens():
+    import logging
+    from app.main import _RedactTokens
+    rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s"', ("1.2.3.4", "GET", "/login/verify?token=SECRET123"), None)
+    _RedactTokens().filter(rec)
+    assert "SECRET123" not in rec.getMessage() and "token=<redacted>" in rec.getMessage()
