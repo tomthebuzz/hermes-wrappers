@@ -1,4 +1,7 @@
 default_hours: 48
+# Floor for any deadline (publisher overrides, markers written by agents):
+# a review is never due earlier than hand-off + min_hours.
+min_hours: 4
 
 on_miss_by_tenant:
   tech: approve

@@ -67,7 +67,7 @@ conn.commit()
 conn.close()
 
 os.environ.update({"KANBAN_DB_PATH": str(DB), "KANBAN_ATTACHMENTS_ROOT": str(ATTACH), "USERS_YAML_PATH": str(USERS),
-                   "SESSION_SECRET": "test-secret", "PORTAL_BASE_URL": "http://portal.test",
+                   "SESSION_SECRET": "test-secret-0123456789", "PORTAL_BASE_URL": "http://portal.test",
                    "SHARED_CONFIG_DIR": str(Path(__file__).resolve().parents[1] / "config")})
 os.environ.pop("HERMES_BRIDGE_URL", None)
 os.environ.pop("PORTAL_AUTH_BACKEND", None)

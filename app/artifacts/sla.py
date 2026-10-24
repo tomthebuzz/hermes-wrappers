@@ -22,7 +22,21 @@ def make_due_date_marker(due: dt.datetime) -> str:
 
 
 def find_deadline(task: dict) -> str | None:
-    return _find_marker(task, SLA_DEADLINE_RE)
+    """The NEWEST SLA-DEADLINE marker in the card's comments. Never the body:
+    anyone who can edit a card could otherwise set a past deadline and let the
+    SLA sweep auto-approve it. Callers still apply the minimum SLA floor."""
+    for c in reversed(task.get("comments", []) or []):
+        m = SLA_DEADLINE_RE.search(c.get("text", "") or "")
+        if m:
+            return m.group(1)
+    return None
+
+
+def parse_ts(value: str) -> dt.datetime | None:
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
 
 
 def deadline_after(unix_ts: int, hours: float) -> str:

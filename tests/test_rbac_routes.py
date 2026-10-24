@@ -143,3 +143,78 @@ def test_autonomy_level_drives_deadline_and_label(alice, monkeypatch, tmp_path):
     finally:
         with sqlite3.connect(DB) as conn:
             conn.execute("UPDATE tasks SET skills=NULL WHERE id='t_tech1'")
+
+
+def test_user_whose_tenants_have_no_cards_sees_nothing(calls):
+    # Review finding 1: an empty tenant list used to mean "no filter".
+    from app import main
+    from app.rbac import UserScope
+    scope = UserScope(telegram_user_id=555, name="New Team", role="x", tenants=("newteam",),
+                      can_rollup=False, can_approve_artifacts=())
+    main.rbac._by_key["555"] = scope
+    try:
+        c = client_as("555")
+        assert c.get("/api/board").json()["tasks"] == []
+        assert c.get("/api/artifacts").json()["tasks"] == []
+    finally:
+        del main.rbac._by_key["555"]
+
+
+def test_sla_markers_cannot_be_forged(alice, calls):
+    marker = "SLA-DEADLINE: 2000-01-01T00:00:00Z"
+    assert alice.post("/api/tasks/t_tech1/comments", json={"text": marker}).status_code == 422
+    assert alice.patch("/api/tasks/t_tech1", json={"body": marker}).status_code == 422
+    assert alice.post("/api/tasks", json={"title": "x", "tenant": "tech", "body": marker, "status": "ready"}).status_code == 422
+    assert alice.post("/api/artifacts/publish", json={"task_id": "t_tech1", "sla_hours": -1000}).status_code == 422
+    assert calls == []
+
+
+def test_a_past_marker_is_floored_at_hand_off_plus_minimum(calls, alice):
+    import sqlite3
+    from conftest import DB
+    with sqlite3.connect(DB) as conn:
+        conn.execute("INSERT INTO task_comments(task_id, author, body, created_at) VALUES ('t_tech1','agent','SLA-DEADLINE: 2000-01-01T00:00:00Z',1)")
+    try:
+        assert alice.get("/api/tasks/t_tech1").json()["sla_deadline"] == "2026-09-21T18:13:20Z"   # hand-off + 4 h
+    finally:
+        with sqlite3.connect(DB) as conn:
+            conn.execute("DELETE FROM task_comments WHERE task_id='t_tech1' AND author='agent'")
+
+
+def test_html_and_svg_attachments_are_never_rendered(alice, calls):
+    import sqlite3
+    from conftest import ATTACH, DB
+    (ATTACH / "t_tech1" / "x.html").write_text("<script>alert(1)</script>")
+    with sqlite3.connect(DB) as conn:
+        conn.execute("INSERT INTO task_attachments(id, task_id, filename, stored_path, content_type, size, created_at)"
+                     " VALUES (9,'t_tech1','x.html','/e/t_tech1/x.html','text/html',10,1)")
+    r = alice.get("/api/attachments/9")
+    assert r.headers["content-type"].startswith("text/plain") and r.headers["x-content-type-options"] == "nosniff"
+    assert "sandbox" in r.headers["content-security-policy"]
+    with sqlite3.connect(DB) as conn:
+        conn.execute("UPDATE task_attachments SET content_type='image/svg+xml' WHERE id=9")
+    r = alice.get("/api/attachments/9")
+    assert r.headers["content-type"] == "application/octet-stream" and r.headers["content-disposition"].startswith("attachment")
+
+
+def test_assignee_must_be_a_department_profile(alice, calls):
+    assert alice.patch("/api/tasks/t_tech2", json={"assignee": "default"}).status_code == 422
+    assert alice.post("/api/tasks", json={"title": "x", "tenant": "tech", "assignee": "-h", "status": "ready"}).status_code == 422
+    assert alice.patch("/api/tasks/t_tech2", json={"assignee": "tech"}).status_code == 200
+    assert alice.patch("/api/tasks/t_tech2", json={"assignee": "none"}).status_code == 200
+
+
+def test_only_reviewers_move_cards_out_of_review_or_archive(calls):
+    viewer = client_as("102")   # Bob: reads sales, approves nothing
+    from app import main
+    from app.rbac import UserScope
+    main.rbac._by_key["556"] = UserScope(telegram_user_id=556, name="Tech Reader", role="x", tenants=("tech",),
+                                         can_rollup=False, can_approve_artifacts=())
+    try:
+        reader = client_as("556")
+        assert reader.post("/api/tasks/t_tech1/transition", json={"status": "ready"}).status_code == 403   # = reject
+        assert reader.post("/api/tasks/t_tech2/transition", json={"status": "archived"}).status_code == 403
+        assert reader.post("/api/tasks/t_tech2/transition", json={"status": "running"}).status_code == 200
+    finally:
+        del main.rbac._by_key["556"]
+    assert viewer.post("/api/tasks/t_sales1/transition", json={"status": "archived"}).status_code == 403

@@ -46,6 +46,12 @@ def veto_window_hours() -> float:
     return float((load_autonomy().get("defaults") or {}).get("veto_window_hours", 24))
 
 
+def min_sla_hours() -> float:
+    """No review deadline is ever earlier than hand-off + this (a marker
+    claiming otherwise is ignored)."""
+    return float(load_sla_defaults().get("min_hours", 4))
+
+
 def default_sla_hours() -> float:
     return float(load_sla_defaults().get("default_hours", 48))
 

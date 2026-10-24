@@ -12,21 +12,24 @@ checklist before trusting this beyond a local smoke test.
 """
 from __future__ import annotations
 
+import html
 import json
+import logging
 import os
+import secrets
 from pathlib import Path
 
 import yaml
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
 
 from . import config_loader, kanban_read, kanban_write
 from .auth.magic_link import MagicLinkAuth, MatrixDM
-from .artifacts.sla import (deadline_after, find_deadline, find_due_date, is_overdue, make_deadline_marker,
-                            seconds_remaining)
+from .artifacts.sla import (SLA_DEADLINE_RE, deadline_after, find_deadline, find_due_date, is_overdue,
+                            make_deadline_marker, parse_ts, seconds_remaining)
 from .rbac import RBAC, UserScope
 
 # --- config (env-driven, container-friendly, no hardcoded host paths) ---
@@ -35,9 +38,13 @@ KANBAN_ATTACHMENTS_ROOT = Path(os.environ.get("KANBAN_ATTACHMENTS_ROOT", "/data/
 USERS_YAML_PATH = Path(os.environ.get("USERS_YAML_PATH", "/config/users.yaml"))
 HERMES_BIN = os.environ.get("HERMES_BIN", "hermes")
 PORTAL_BASE_URL = os.environ.get("PORTAL_BASE_URL", "http://localhost:8080")
-SESSION_SECRET = os.environ.get("SESSION_SECRET", "dev-insecure-change-me")
+SESSION_SECRET = os.environ.get("SESSION_SECRET", "")
+if len(SESSION_SECRET) < 16 or SESSION_SECRET == "dev-insecure-change-me":
+    # Fail closed: with a known secret anyone can forge a session for any user.
+    raise RuntimeError("SESSION_SECRET must be set to a random value (at least 16 characters)")
 
 app = FastAPI(title="Team Portal")
+logger = logging.getLogger("team_portal")
 rbac = RBAC(USERS_YAML_PATH)
 PORTAL_AUTH_BACKEND = os.environ.get("PORTAL_AUTH_BACKEND", "magic_link_telegram")
 matrix_dm = None
@@ -84,33 +91,63 @@ class LoginRequest(BaseModel):
     login: str
 
 
+LOGIN_NONCE_COOKIE = "login_nonce"
+
+
 @app.post("/login")
-def login(body: LoginRequest):
+def login(body: LoginRequest, request: Request):
+    """Same answer whether or not the account exists, how it signs in, or
+    whether delivery worked: this endpoint must not tell anyone who is
+    provisioned. Failures are logged for the operator instead."""
+    nonce = request.cookies.get(LOGIN_NONCE_COOKIE) or secrets.token_urlsafe(16)
     scope = rbac.resolve_login(body.login)
-    if scope is None:
-        # Deliberately vague error — don't let this endpoint be used to
-        # enumerate which Telegram handles/IDs are provisioned.
-        raise HTTPException(status_code=400, detail="Could not send login link")
-    result = magic_link.issue(scope)
-    channel = "Matrix" if matrix_dm and scope.matrix_id else "Telegram"
-    if not result.delivered:
-        raise HTTPException(status_code=502, detail=f"Could not deliver {channel} login link: {result.error}")
-    return {"status": "sent", "note": f"Check {channel} for a login link."}
+    if scope is not None:
+        result = magic_link.issue(scope, nonce=nonce)
+        if not result.delivered:
+            logger.warning("login link for a provisioned user not delivered: %s", result.error[:200])
+    response = JSONResponse({"status": "sent", "note": "If this account exists, a login link is on its way (Matrix or Telegram)."})
+    response.set_cookie(LOGIN_NONCE_COOKIE, nonce, max_age=900, httponly=True, samesite="lax",
+                        secure=PORTAL_BASE_URL.startswith("https://"))
+    return response
 
 
-@app.get("/login/verify")
-def login_verify(token: str):
-    user_key = magic_link.verify(token)
-    if user_key is None:
-        raise HTTPException(status_code=400, detail="Invalid or expired token")
-    session_value = signer.dumps(user_key)
-    response = RedirectResponse(url="/")
+def _start_session(user_key: str) -> RedirectResponse:
+    response = RedirectResponse(url="/", status_code=303)
     response.set_cookie(
-        SESSION_COOKIE, session_value,
+        SESSION_COOKIE, signer.dumps(user_key),
         max_age=SESSION_MAX_AGE, httponly=True, samesite="lax",
         secure=PORTAL_BASE_URL.startswith("https://"),
     )
+    response.delete_cookie(LOGIN_NONCE_COOKIE)
     return response
+
+
+@app.get("/login/verify")
+def login_verify(token: str, request: Request):
+    pending = magic_link.peek(token)
+    if pending is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+    if pending.nonce and secrets.compare_digest(pending.nonce, request.cookies.get(LOGIN_NONCE_COOKIE, "")):
+        return _start_session(magic_link.verify(token))
+    # Opened in a browser that did not ask for this link (another device, or a
+    # link someone sent you): ask first and show whose account it is, so a
+    # forwarded link cannot silently sign you in as someone else.
+    scope = rbac.get(pending.user_key)
+    name = html.escape(scope.name if scope else "unknown")
+    return HTMLResponse(f"""<!doctype html><meta charset="utf-8"><title>Team Portal sign-in</title>
+<body style="font:15px system-ui;margin:3rem auto;max-width:28rem">
+<h2>Sign in to the Team Portal</h2><p>This link signs you in as <b>{name}</b>.
+Only continue if that is you and you asked for this link.</p>
+<form method="post" action="/login/verify"><input type="hidden" name="token" value="{html.escape(token)}">
+<button type="submit">Continue as {name}</button></form></body>""", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/login/verify")
+def login_verify_confirm(token: str = Form(...)):
+    user_key = magic_link.verify(token)
+    if user_key is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+    return _start_session(user_key)
 
 
 @app.post("/logout")
@@ -149,12 +186,12 @@ def update_profile(body: ProfileUpdateRequest, user: UserScope = Depends(require
     try:
         data = yaml.safe_load(USERS_YAML_PATH.read_text()) or {}
         entries = data.get("users", [])
-        target = next((e for e in entries if e.get("telegram_user_id") == user.telegram_user_id), None)
+        target = next((e for e in entries if str(e.get("telegram_user_id")) == str(user.telegram_user_id)), None)
         if target is None:
             raise HTTPException(status_code=409, detail="User entry is no longer configured")
         for entry in entries:
             existing = str(entry.get("telegram_username", "")).strip().removeprefix("@").lower()
-            if existing == username and entry.get("telegram_user_id") != user.telegram_user_id:
+            if existing == username and str(entry.get("telegram_user_id")) != str(user.telegram_user_id):
                 raise HTTPException(status_code=409, detail="That Telegram username is already assigned")
         target["telegram_username"] = username
         # users.yaml is mounted as a single writable Docker file. Replace its
@@ -225,10 +262,13 @@ def review_deadline(task: dict) -> str | None:
     if level is not None and level >= 3:
         requested_at = kanban_read.latest_event_at(KANBAN_DB_PATH, task["id"], "review_requested")
         return deadline_after(requested_at, config_loader.veto_window_hours()) if requested_at else None
-    marker = find_deadline(task)
-    if marker:
-        return marker
     requested_at = kanban_read.latest_event_at(KANBAN_DB_PATH, task["id"], "review_requested")
+    marker = find_deadline(task)
+    if marker and parse_ts(marker) is not None:
+        if requested_at is None:
+            return marker
+        floor = deadline_after(requested_at, config_loader.min_sla_hours())
+        return marker if parse_ts(marker) >= parse_ts(floor) else floor
     return deadline_after(requested_at, config_loader.default_sla_hours()) if requested_at else None
 
 
@@ -259,6 +299,9 @@ async def upload_task_attachment(task_id: str, file: UploadFile = File(...), use
     return {"ok": True, "detail": result.stdout[:1000]}
 
 
+INLINE_TYPES = {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
 @app.get("/api/attachments/{attachment_id}")
 def download_task_attachment(
     attachment_id: int, download: bool = Query(False), user: UserScope = Depends(require_user)
@@ -278,14 +321,39 @@ def download_task_attachment(
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="Attachment file is not mounted in the portal")
     content_type = attachment.get("content_type") or "application/octet-stream"
-    previewable = content_type == "application/pdf" or content_type.startswith(("image/", "text/"))
+    # Inline only for types a browser cannot run as a page from the Portal's
+    # origin (an uploaded .html or .svg would otherwise be stored XSS); text
+    # previews are served as text/plain. Everything is sandboxed.
+    if content_type.startswith("text/"):
+        content_type = "text/plain; charset=utf-8"
+    previewable = content_type in INLINE_TYPES or content_type.startswith("text/plain")
     disposition = "attachment" if download or not previewable else "inline"
     return FileResponse(candidate, filename=attachment["filename"],
-                        media_type=content_type, content_disposition_type=disposition)
+                        media_type=content_type if previewable else "application/octet-stream",
+                        content_disposition_type=disposition,
+                        headers={"X-Content-Type-Options": "nosniff",
+                                 "Content-Security-Policy": "sandbox; default-src 'none'"})
 
 
 class CommentRequest(BaseModel):
     text: str
+
+
+def reject_reserved_markers(*texts: str | None) -> None:
+    """SLA-DEADLINE markers are written only by publish-for-review."""
+    if any(t and SLA_DEADLINE_RE.search(t) for t in texts):
+        raise HTTPException(status_code=422, detail="SLA-DEADLINE markers are set by 'Publish for review', not by hand")
+
+
+def check_assignee(assignee: str | None, allow_none: bool = False) -> None:
+    """Only installed department profiles (bridge /kanban/assignees): never the
+    operator's default profile or an arbitrary string."""
+    if assignee in (None, ""):
+        return
+    if allow_none and assignee == "none":
+        return
+    if assignee not in kanban_write.list_assignees():
+        raise HTTPException(status_code=422, detail=f"Unknown assignee {assignee!r}")
 
 
 @app.post("/api/tasks/{task_id}/comments")
@@ -293,6 +361,7 @@ def add_comment(task_id: str, body: CommentRequest, user: UserScope = Depends(re
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
     if task is None or not user.can_read_tenant(task.get("tenant", "")):
         raise HTTPException(status_code=403, detail="Not in your scope")
+    reject_reserved_markers(body.text)
     result = kanban_write.comment_task(HERMES_BIN, task_id, body.text, author=user.name)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
@@ -319,6 +388,8 @@ def create_task(body: CreateTaskRequest, user: UserScope = Depends(require_user)
         raise HTTPException(status_code=422, detail="Unsupported initial status")
     if body.status in {"done", "archived"} and not user.can_approve_tenant(body.tenant):
         raise HTTPException(status_code=403, detail="Review permission is required for this initial status")
+    reject_reserved_markers(body.title, body.body)
+    check_assignee(body.assignee)
     result = kanban_write.create_task(HERMES_BIN, body.title, body.tenant, body.body,
                                       body.assignee, body.status, body.priority)
     if not result.ok:
@@ -342,6 +413,8 @@ def edit_task(task_id: str, body: EditTaskRequest, user: UserScope = Depends(req
         raise HTTPException(status_code=403, detail="Not in your scope")
     if body.title is None and body.body is None and body.priority is None and body.assignee is None:
         raise HTTPException(status_code=422, detail="At least one editable field is required")
+    reject_reserved_markers(body.title, body.body)
+    check_assignee(body.assignee, allow_none=True)
     if body.title is not None or body.body is not None or body.priority is not None:
         result = kanban_write.edit_task(HERMES_BIN, task_id, body.title, body.body, body.priority)
         if not result.ok:
@@ -370,6 +443,9 @@ def transition_task(task_id: str, body: TransitionTaskRequest, user: UserScope =
         raise HTTPException(status_code=403, detail="Not in your scope")
     if body.status == "done" and not user.can_approve_tenant(task.get("tenant", "")):
         raise HTTPException(status_code=403, detail="Only an artifact reviewer can complete this task")
+    if (task.get("status") == "review" or body.status == "archived") and not user.can_approve_tenant(task.get("tenant", "")):
+        # Moving a card out of Review rejects it; archiving removes it from view.
+        raise HTTPException(status_code=403, detail="Only an artifact reviewer can move a card out of Review or archive it")
     result = kanban_write.transition_task(
         HERMES_BIN, task_id, body.status, body.reason, task.get("status"), author=user.name
     )
@@ -425,6 +501,8 @@ def publish_artifact(body: PublishArtifactRequest, user: UserScope = Depends(req
     if task is None or not user.can_read_tenant(task.get("tenant", "")):
         raise HTTPException(status_code=403, detail="Not in your scope")
     hours = body.sla_hours if body.sla_hours is not None else config_loader.default_sla_hours()
+    if not config_loader.min_sla_hours() <= hours <= 24 * 30:
+        raise HTTPException(status_code=422, detail=f"sla_hours must be between {config_loader.min_sla_hours():g} and 720")
     marker = make_deadline_marker(hours)
     kanban_write.comment_task(HERMES_BIN, body.task_id, marker, author=user.name)
     result = kanban_write.publish_artifact_for_review(HERMES_BIN, body.task_id, body.summary)

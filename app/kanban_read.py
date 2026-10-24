@@ -40,7 +40,10 @@ def _connect(db_path: Path, attempts: int = 8) -> sqlite3.Connection:
 
 
 def list_tasks(db_path: Path, tenants: Optional[list] = None, status: Optional[str] = None) -> list[dict]:
-    """tenants=None means no tenant filter (rollup view)."""
+    """tenants=None means no tenant filter (rollup view); an empty list means
+    no tenants at all, i.e. nothing — never "everything"."""
+    if tenants is not None and not tenants:
+        return []
     conn = _connect(db_path)
     try:
         sql = """
@@ -56,7 +59,7 @@ def list_tasks(db_path: Path, tenants: Optional[list] = None, status: Optional[s
             WHERE 1=1
         """
         params: list = []
-        if tenants:
+        if tenants is not None:
             placeholders = ",".join("?" for _ in tenants)
             sql += f" AND tenant IN ({placeholders})"
             params.extend(tenants)

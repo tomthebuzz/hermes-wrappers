@@ -28,10 +28,15 @@ from ..rbac import UserScope
 TOKEN_TTL_SECONDS = 600  # 10 minutes
 
 
+MAX_LINKS_PER_WINDOW = 3     # per user per TOKEN_TTL_SECONDS
+MAX_PENDING = 1000
+
+
 @dataclass
 class PendingToken:
     user_key: str
     expires_at: float
+    nonce: str = ""      # the requesting browser's login_nonce cookie
 
 
 class MatrixDM:
@@ -50,14 +55,27 @@ class MatrixDM:
         except ValueError:
             return resp.status_code, {}
 
+    def _usable_dm(self, room: str, user_id: str) -> bool:
+        """Still a two-person room the user is in (or invited to)."""
+        q = urllib.parse.quote
+        code, member = self._call("GET", f"/_matrix/client/v3/rooms/{q(room)}/state/m.room.member/{q(user_id)}")
+        if code != 200 or member.get("membership") not in ("join", "invite"):
+            return False
+        code, joined = self._call("GET", f"/_matrix/client/v3/rooms/{q(room)}/joined_members")
+        return code == 200 and len(joined.get("joined", {})) <= 2
+
     def send(self, user_id: str, text: str) -> None:
         code, me = self._call("GET", "/_matrix/client/v3/account/whoami")
         if code != 200:
             raise RuntimeError(f"portal bot token rejected ({code})")
         direct_path = f"/_matrix/client/v3/user/{urllib.parse.quote(me['user_id'])}/account_data/m.direct"
         code, direct = self._call("GET", direct_path)
-        direct = direct if code == 200 else {}
-        room = next(iter(direct.get(user_id, [])), None)
+        if code == 404:
+            direct = {}
+        elif code != 200:
+            # Writing back a guessed {} would wipe the bot's other DM mappings.
+            raise RuntimeError(f"could not read the bot's DM list ({code})")
+        room = next((r for r in direct.get(user_id, []) if self._usable_dm(r, user_id)), None)
         if room is None:
             code, created = self._call("POST", "/_matrix/client/v3/createRoom", {
                 "is_direct": True, "invite": [user_id], "preset": "trusted_private_chat",
@@ -65,7 +83,7 @@ class MatrixDM:
             if code != 200:
                 raise RuntimeError(f"could not open a DM with {user_id} ({code}: {created.get('error', '')})")
             room = created["room_id"]
-            direct.setdefault(user_id, []).append(room)
+            direct[user_id] = [room] + [r for r in direct.get(user_id, []) if r != room]
             self._call("PUT", direct_path, direct)
         txn = secrets.token_hex(8)
         code, resp = self._call("PUT", f"/_matrix/client/v3/rooms/{urllib.parse.quote(room)}/send/m.room.message/{txn}",
@@ -92,11 +110,17 @@ class MagicLinkAuth:
         self._matrix = matrix
         self._pending: dict[str, PendingToken] = {}
 
-    def issue(self, user: UserScope) -> IssueResult:
+    def issue(self, user: UserScope, nonce: str = "") -> IssueResult:
+        now = time.time()
+        self._pending = {t: p for t, p in self._pending.items() if p.expires_at > now}
+        recent = sum(1 for p in self._pending.values() if p.user_key == user.key)
+        if recent >= MAX_LINKS_PER_WINDOW or len(self._pending) >= MAX_PENDING:
+            return IssueResult(token="", delivered=False, error="rate limited")
         token = secrets.token_urlsafe(32)
         self._pending[token] = PendingToken(
             user_key=user.key,
-            expires_at=time.time() + TOKEN_TTL_SECONDS,
+            expires_at=now + TOKEN_TTL_SECONDS,
+            nonce=nonce,
         )
         link = f"{self._portal_base_url}/login/verify?token={token}"
         message = (
@@ -138,6 +162,11 @@ class MagicLinkAuth:
         if result.returncode != 0:
             return IssueResult(token=token, delivered=False, error=result.stderr[:300] or "direct send failed")
         return IssueResult(token=token, delivered=True)
+
+    def peek(self, token: str) -> PendingToken | None:
+        """The pending login for a token without using it up."""
+        pending = self._pending.get(token)
+        return pending if pending and time.time() <= pending.expires_at else None
 
     def verify(self, token: str) -> str | None:
         pending = self._pending.pop(token, None)
