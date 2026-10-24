@@ -54,6 +54,26 @@ things up on the web; it cannot run programs or open files on the server.
 When a card is ready for review or done, the assistant posts it in the room,
 and each morning it posts a digest of the board.
 
+## People (owners)
+
+If you manage your team's access, **People** in the top bar lists everyone on
+your server. You never need the server itself:
+
+- **Add person**: name, user name (becomes `@name:server`), and per team
+  whether they are a member and whether they may approve drafts. The Portal
+  shows the initial password once; give it to the person yourself, not by
+  e-mail. They sign in to Element or any Matrix app (homeserver = the server
+  name, Tailscale on), accept the invites to their teams' rooms and change
+  the password in Element Web (Settings › Account).
+- **Change**: tick or untick teams. New rooms are offered at once; rooms
+  they no longer belong to are left for them.
+- **Remove person**: takes away every room and the Portal; the account is
+  closed for good.
+
+Each change takes up to a minute (the assistants restart to pick it up).
+You can only hand out teams you can see and approval where you may approve;
+owners and your own account are changed by the operator.
+
 ## Good to know
 
 - Do not paste passwords, card numbers or other people's personal data into

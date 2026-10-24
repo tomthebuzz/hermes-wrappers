@@ -20,6 +20,7 @@ therefore supports both:
 from __future__ import annotations
 
 import dataclasses
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -56,6 +57,7 @@ class UserScope:
     telegram_username: str | None = None
     telegram_chat_id: str | None = None
     matrix_id: str | None = None
+    can_manage_people: bool = False
 
     @property
     def key(self) -> str:
@@ -88,7 +90,22 @@ class RBAC:
         self._by_key: dict[str, UserScope] = {}
         self._by_username: dict[str, UserScope] = {}
         self._by_matrix: dict[str, UserScope] = {}
+        self._mtime = 0.0
         self.reload()
+
+    def _fresh(self) -> None:
+        """users.yaml is also changed from outside (harness-kit's human.sh,
+        behind the People page): pick that up without a restart. A file that
+        no longer parses keeps the last good state."""
+        try:
+            mtime = self._path.stat().st_mtime
+        except OSError:
+            return
+        if mtime != self._mtime:
+            try:
+                self.reload()
+            except (ValueError, yaml.YAMLError, OSError):
+                logging.getLogger(__name__).exception("users.yaml changed but does not load; keeping the previous users")
 
     def reload(self) -> None:
         if not self._path.exists():
@@ -96,6 +113,7 @@ class RBAC:
                 f"{self._path} not found — copy users.yaml.example to users.yaml "
                 "and fill in real Telegram IDs/usernames before starting the portal."
             )
+        mtime = self._path.stat().st_mtime
         data = yaml.safe_load(self._path.read_text()) or {}
         by_key: dict[str, UserScope] = {}
         by_username: dict[str, UserScope] = {}
@@ -115,6 +133,7 @@ class RBAC:
                 tenants=tuple(entry.get("tenants", [])),
                 can_rollup=bool(entry.get("can_rollup", False)),
                 can_approve_artifacts=tuple(entry.get("can_approve_artifacts", [])),
+                can_manage_people=bool(entry.get("can_manage_people", False)),
             )
             by_key[scope.key] = scope
             if username:
@@ -124,9 +143,15 @@ class RBAC:
         self._by_key = by_key
         self._by_username = by_username
         self._by_matrix = by_matrix
+        self._mtime = mtime
 
     def get(self, key: str | int) -> Optional[UserScope]:
+        self._fresh()
         return self._by_key.get(str(key))
+
+    def all(self) -> list[UserScope]:
+        self._fresh()
+        return list(self._by_key.values())
 
     def resolve_login(self, login: str) -> Optional[UserScope]:
         """Resolve a login string: @username preferred, numeric ID accepted
@@ -134,6 +159,7 @@ class RBAC:
         raw = str(login).strip()
         if not raw:
             return None
+        self._fresh()
         matrix_id = normalize_matrix_id(raw)
         if matrix_id:
             return self._by_matrix.get(matrix_id)

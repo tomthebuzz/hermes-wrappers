@@ -27,7 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
 
-from . import config_loader, kanban_read, kanban_write
+from . import config_loader, kanban_read, kanban_write, people
 from .auth.magic_link import MagicLinkAuth, MatrixDM
 from .artifacts.sla import (SLA_DEADLINE_RE, deadline_after, find_deadline, find_due_date, is_overdue,
                             make_deadline_marker, parse_ts, seconds_remaining)
@@ -46,6 +46,12 @@ if len(SESSION_SECRET) < 16 or SESSION_SECRET == "dev-insecure-change-me":
 
 app = FastAPI(title="Team Portal")
 logger = logging.getLogger("team_portal")
+if not logger.handlers:   # uvicorn configures only its own loggers; People changes are an audit trail
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
 
 
 class _RedactTokens(logging.Filter):
@@ -183,6 +189,7 @@ def profile(user: UserScope = Depends(require_user)):
         "tenants": list(user.tenants),
         "can_rollup": user.can_rollup,
         "can_approve_artifacts": list(user.can_approve_artifacts),
+        "can_manage_people": user.can_manage_people,
     }
 
 
@@ -216,6 +223,132 @@ def update_profile(body: ProfileUpdateRequest, user: UserScope = Depends(require
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Could not save profile; check users.yaml mount permissions: {e}")
     return {"ok": True, "telegram_username": username}
+
+
+# --- people (Matrix account, tenant rooms, bots, Portal access) ---
+#
+# Rules, so the page cannot be used to gain or hand out more than one has:
+#   * only users with can_manage_people (owners by default) see or use it;
+#   * only Matrix accounts on the manager's own server, never owners, never
+#     oneself (owners are changed in team.yaml on the host);
+#   * tenants given must be ones the manager can read, approval only where
+#     the manager may approve; nobody gets can_rollup from here;
+#   * a person the manager cannot fully see (tenants outside the manager's
+#     reach) cannot be changed or removed by that manager.
+
+LOCALPART_RE = re.compile(r"^[a-z0-9][a-z0-9._=-]{0,63}$")
+NAME_RE = re.compile(r'^[^\x00-\x1f\x7f"\\]{1,60}$')
+people_log = logging.getLogger("team_portal.people")
+
+
+def require_people_manager(user: UserScope = Depends(require_user)) -> UserScope:
+    if not user.can_manage_people or not user.matrix_id:
+        raise HTTPException(status_code=403, detail="Managing people is not part of your role")
+    return user
+
+
+def _server(user: UserScope) -> str:
+    return str(user.matrix_id).split(":", 1)[1]
+
+
+def _grantable(user: UserScope) -> list[str]:
+    known = set(kanban_read.distinct_tenants(KANBAN_DB_PATH)) | {t for u in rbac.all() for t in u.tenants}
+    return sorted(known if user.can_rollup else set(user.tenants))
+
+
+def _check_grant(user: UserScope, tenants: list[str], approve: list[str]) -> None:
+    grantable = set(_grantable(user))
+    if not tenants:
+        raise HTTPException(status_code=422, detail="Pick at least one tenant")
+    if set(tenants) - grantable:
+        raise HTTPException(status_code=403, detail="You can only give tenants you can read")
+    if set(approve) - set(tenants):
+        raise HTTPException(status_code=422, detail="Approval only for tenants the person can read")
+    if set(approve) - set(user.can_approve_artifacts):
+        raise HTTPException(status_code=403, detail="You can only give approval where you may approve")
+
+
+def _target(user: UserScope, localpart: str) -> UserScope:
+    if not LOCALPART_RE.fullmatch(localpart):
+        raise HTTPException(status_code=422, detail="Invalid user name")
+    mxid = f"@{localpart}:{_server(user)}"
+    target = next((u for u in rbac.all() if u.matrix_id == mxid), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="No such person")
+    if target.role == "owner" or target.matrix_id == user.matrix_id:
+        raise HTTPException(status_code=403, detail="Owners and your own account are changed by the operator")
+    if not user.can_rollup and (set(target.tenants) - set(user.tenants) or target.can_rollup):
+        raise HTTPException(status_code=403, detail="This person has access outside your tenants")
+    return target
+
+
+class AddPersonRequest(BaseModel):
+    localpart: str
+    name: str
+    tenants: list[str]
+    approve: list[str] = []
+
+
+class UpdatePersonRequest(BaseModel):
+    tenants: list[str]
+    approve: list[str] = []
+
+
+@app.get("/api/people")
+def list_people(user: UserScope = Depends(require_people_manager)):
+    server = _server(user)
+    rows = []
+    for u in sorted(rbac.all(), key=lambda u: u.name.lower()):
+        if not u.matrix_id or not u.matrix_id.endswith(f":{server}"):
+            continue
+        editable = u.role != "owner" and u.matrix_id != user.matrix_id and (
+            user.can_rollup or not (set(u.tenants) - set(user.tenants) or u.can_rollup))
+        rows.append({"name": u.name, "matrix_id": u.matrix_id, "localpart": u.matrix_id[1:].split(":")[0],
+                     "role": u.role, "tenants": list(u.tenants), "approve": list(u.can_approve_artifacts),
+                     "editable": editable})
+    return {"people": rows, "tenants": _grantable(user), "approvable": list(user.can_approve_artifacts),
+            "server": server}
+
+
+@app.post("/api/people")
+def add_person(body: AddPersonRequest, user: UserScope = Depends(require_people_manager)):
+    localpart = body.localpart.strip().lower()
+    if not LOCALPART_RE.fullmatch(localpart) or localpart in ("admin", "portal"):
+        raise HTTPException(status_code=422, detail="User name: lowercase letters, digits, . _ = - (no spaces)")
+    if not NAME_RE.fullmatch(body.name.strip()):
+        raise HTTPException(status_code=422, detail="Name: one line, at most 60 characters, no quotes")
+    if any(u.matrix_id == f"@{localpart}:{_server(user)}" for u in rbac.all()):
+        raise HTTPException(status_code=409, detail="That user name is taken")
+    _check_grant(user, body.tenants, body.approve)
+    people_log.info("people: %s adds @%s", user.matrix_id, localpart)
+    r = people.add(localpart, body.name.strip(), body.tenants, body.approve)
+    if not r.ok:
+        raise HTTPException(status_code=502, detail=r.error)
+    rbac.reload()
+    return {"ok": True, "matrix_id": r.data.get("matrix_id"), "initial_password": r.data.get("initial_password")}
+
+
+@app.put("/api/people/{localpart}")
+def update_person(localpart: str, body: UpdatePersonRequest, user: UserScope = Depends(require_people_manager)):
+    _target(user, localpart)
+    _check_grant(user, body.tenants, body.approve)
+    people_log.info("people: %s sets @%s to %s", user.matrix_id, localpart, ",".join(body.tenants))
+    r = people.update(localpart, body.tenants, body.approve)
+    if not r.ok:
+        raise HTTPException(status_code=502, detail=r.error)
+    rbac.reload()
+    return {"ok": True}
+
+
+@app.delete("/api/people/{localpart}")
+def remove_person(localpart: str, user: UserScope = Depends(require_people_manager)):
+    _target(user, localpart)
+    people_log.info("people: %s removes @%s", user.matrix_id, localpart)
+    r = people.remove(localpart)
+    if not r.ok:
+        raise HTTPException(status_code=502, detail=r.error)
+    rbac.reload()
+    return {"ok": True}
 
 
 @app.get("/", response_class=HTMLResponse)

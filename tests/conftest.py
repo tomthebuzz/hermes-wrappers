@@ -44,6 +44,32 @@ users:
     tenants: [ops]
     can_rollup: false
     can_approve_artifacts: [ops]
+  - matrix_id: "@own:hs.test"
+    name: "Owen Owner"
+    role: owner
+    tenants: [tech, sales, ops, leadership]
+    can_rollup: true
+    can_approve_artifacts: [tech, sales, ops, leadership]
+    can_manage_people: true
+  - matrix_id: "@lead:hs.test"
+    name: "Lea Lead"
+    role: member
+    tenants: [tech, sales]
+    can_rollup: false
+    can_approve_artifacts: [tech]
+    can_manage_people: true
+  - matrix_id: "@tim:hs.test"
+    name: "Tim Tech"
+    role: member
+    tenants: [tech]
+    can_rollup: false
+    can_approve_artifacts: []
+  - matrix_id: "@sam:hs.test"
+    name: "Sam Wide"
+    role: member
+    tenants: [sales, ops]
+    can_rollup: false
+    can_approve_artifacts: []
 defaults:
   unknown_user_tenants: []
   unknown_user_can_rollup: false
