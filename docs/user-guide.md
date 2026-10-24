@@ -16,6 +16,11 @@ department also has a chat room where you can talk to the assistant directly.
 
 You only ever see your own department's cards (leadership sees all).
 
+**Change your password** (the one for Element and the Matrix apps) under
+**Profile › Change password**: your current password, then the new one
+twice (at least 12 characters). Do this right after your first sign-in;
+the apps you are signed in to stay signed in.
+
 ## The board
 
 Columns follow the work: **Triage** (new ideas the assistant will shape),
@@ -62,9 +67,10 @@ your server. You never need the server itself:
 - **Add person**: name, user name (becomes `@name:server`), and per team
   whether they are a member and whether they may approve drafts. The Portal
   shows the initial password once; give it to the person yourself, not by
-  e-mail. They sign in to Element or any Matrix app (homeserver = the server
-  name, Tailscale on), accept the invites to their teams' rooms and change
-  the password in Element Web (Settings › Account).
+  e-mail (**Copy** buttons per line, or **Copy all**). They sign in to
+  Element or any Matrix app (homeserver = the server name, Tailscale on),
+  accept the invites to their teams' rooms and change the password in the
+  Portal (Profile › Change password).
 - **Change**: tick or untick teams. New rooms are offered at once; rooms
   they no longer belong to are left for them.
 - **Remove person**: takes away every room and the Portal; the account is

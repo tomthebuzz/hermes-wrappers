@@ -29,6 +29,7 @@ from pydantic import BaseModel
 
 from . import config_loader, kanban_read, kanban_write, people
 from .auth.magic_link import MagicLinkAuth, MatrixDM
+from .auth.matrix_password import PasswordChanger
 from .artifacts.sla import (SLA_DEADLINE_RE, deadline_after, find_deadline, find_due_date, is_overdue,
                             make_deadline_marker, parse_ts, seconds_remaining)
 from .rbac import RBAC, UserScope
@@ -70,6 +71,7 @@ PORTAL_AUTH_BACKEND = os.environ.get("PORTAL_AUTH_BACKEND", "magic_link_telegram
 matrix_dm = None
 if PORTAL_AUTH_BACKEND == "magic_link_matrix":
     matrix_dm = MatrixDM(os.environ["MATRIX_HOMESERVER"], os.environ["MATRIX_PORTAL_TOKEN"])
+password_changer = PasswordChanger(os.environ["MATRIX_HOMESERVER"]) if os.environ.get("MATRIX_HOMESERVER") else None
 magic_link = MagicLinkAuth(
     hermes_bin=HERMES_BIN, portal_base_url=PORTAL_BASE_URL,
     bridge_url=os.environ.get("HERMES_BRIDGE_URL"),
@@ -348,6 +350,25 @@ def remove_person(localpart: str, user: UserScope = Depends(require_people_manag
     if not r.ok:
         raise HTTPException(status_code=502, detail=r.error)
     rbac.reload()
+    return {"ok": True}
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.post("/api/profile/password")
+def change_password(body: PasswordChangeRequest, user: UserScope = Depends(require_user)):
+    """The signed-in person's own Matrix password (see auth/matrix_password.py)."""
+    if not user.matrix_id:
+        raise HTTPException(status_code=409, detail="This account has no Matrix login")
+    if password_changer is None:
+        raise HTTPException(status_code=503, detail="Password changes are not configured (MATRIX_HOMESERVER)")
+    outcome = password_changer.change(user.matrix_id, body.current_password, body.new_password)
+    if not outcome.ok:
+        raise HTTPException(status_code=outcome.status, detail=outcome.error)
+    logger.info("password changed by %s", user.matrix_id)
     return {"ok": True}
 
 
