@@ -136,3 +136,17 @@ ingress timing) rather than silently assumed.
    If no Telegram message arrives, the `/login` API now returns a 502 when the
    bridge reports a send failure; also check `/tmp/hermes-bridge.log` and make
    sure the user has started the Telegram bot at least once.
+
+## Tests
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
+.venv/bin/python -m pytest tests
+```
+
+The suite builds a temporary `kanban.db` from the real Hermes schema
+(`tests/kanban_schema.sql`), one user per RBAC shape (tenant editor, viewer,
+rollup lead, Matrix-only user) and records every `kanban_write` call instead
+of reaching the bridge. It checks that every route refuses what a user's
+scope does not allow — and that refused writes never reach Hermes — plus
+attribution, upload limits, deadlines and Matrix login.
