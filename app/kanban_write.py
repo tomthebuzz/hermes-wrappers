@@ -195,11 +195,24 @@ def approve_artifact(hermes_bin: str, task_id: str, note: str = "") -> CLIResult
     return _run(hermes_bin, *args)
 
 
-def reject_artifact(hermes_bin: str, task_id: str, reason: str) -> CLIResult:
-    """Reject == request-changes, sending it back to the publisher."""
+def reject_artifact(hermes_bin: str, task_id: str, reason: str, author: str | None = None) -> CLIResult:
+    """Reject == send the card back to its implementer with the reason."""
     if BRIDGE_URL:
-        return _bridge_call("POST", f"/kanban/tasks/{task_id}/reject", {"reason": reason})
-    return _run(hermes_bin, "request-changes", task_id, reason)
+        return _bridge_call("POST", f"/kanban/tasks/{task_id}/reject", {"reason": reason, "author": author})
+    # A card waiting in Review has no reviewer run, so request-changes would
+    # refuse it; reopen-review is the verb for that state.
+    return _run(hermes_bin, "reopen-review", f"--reason={reason}", task_id)
+
+
+def list_assignees() -> list[str]:
+    if not BRIDGE_URL:
+        return []
+    headers = {"X-API-Key": BRIDGE_API_KEY} if BRIDGE_API_KEY else {}
+    try:
+        resp = httpx.get(f"{BRIDGE_URL}/kanban/assignees", headers=headers, timeout=BRIDGE_TIMEOUT)
+    except httpx.HTTPError:
+        return []
+    return resp.json() if resp.status_code == 200 else []
 
 
 def publish_artifact_for_review(hermes_bin: str, task_id: str, summary: str = "") -> CLIResult:

@@ -25,6 +25,13 @@ def find_deadline(task: dict) -> str | None:
     return _find_marker(task, SLA_DEADLINE_RE)
 
 
+def deadline_after(unix_ts: int, hours: float) -> str:
+    """Default review deadline for a hand-off without an SLA-DEADLINE marker
+    (a worker's own `request-review` never writes one)."""
+    deadline = dt.datetime.fromtimestamp(unix_ts, dt.timezone.utc) + dt.timedelta(hours=hours)
+    return deadline.isoformat().replace("+00:00", "Z")
+
+
 def find_due_date(task: dict) -> str | None:
     return _find_marker(task, DUE_DATE_RE)
 

@@ -70,6 +70,19 @@ def list_tasks(db_path: Path, tenants: Optional[list] = None, status: Optional[s
         conn.close()
 
 
+def latest_event_at(db_path: Path, task_id: str, kind: str) -> Optional[int]:
+    """Unix time of the task's newest event of this kind (e.g. review_requested)."""
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT MAX(created_at) AS at FROM task_events WHERE task_id = ? AND kind = ?",
+            (task_id, kind),
+        ).fetchone()
+        return row["at"] if row and row["at"] is not None else None
+    finally:
+        conn.close()
+
+
 def get_task(db_path: Path, task_id: str) -> Optional[dict]:
     conn = _connect(db_path)
     try:
