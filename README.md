@@ -36,12 +36,12 @@ and how to run it. Without `HERMES_BRIDGE_URL` set, this app falls back to
 shelling out to a local `hermes` binary directly (useful for native/dev
 runs where this process IS on the Hermes host) — same code, two modes.
 
-## IMPORTANT — built blind, verify before trusting
+## Status (2026-10-24)
 
-Written in a sandbox with no live Hermes install, no real kanban.db, and no
-way to run an end-to-end test against actual data. Syntax-checked, not
-integration-tested. Treat as a strong skeleton to validate on the real host,
-not a finished product.
+Runs on the Mac mini as the harness-kit `macmini` Portal (Docker, :8081)
+against the live `team` board: create → department worker → review →
+reject/approve walked end to end, six departments in parallel, Matrix login
+live. `tests/` (36 tests, in CI) covers the RBAC boundary route by route.
 
 ## Architecture
 
