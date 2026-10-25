@@ -10,3 +10,4 @@ on_miss_by_tenant:
   finance: reject
   ops: approve
   leadership: reject
+  hr: reject

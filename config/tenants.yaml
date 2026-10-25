@@ -23,3 +23,7 @@ tenants:
     label: "Leadership"
     telegram_group_chat_id: null
     rollup: true
+  hr:
+    label: "HR"
+    telegram_group_chat_id: null
+    rollup: false

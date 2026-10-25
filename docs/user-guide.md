@@ -46,9 +46,11 @@ Open your department's room (for example **Tech**) and write normally:
 - "Research the three biggest competitors of … and summarise in a table."
 - "Draft a reply to this customer question: …"
 
-Everyone in the room sees every message, but the assistant keeps a separate
-conversation per person: it remembers what *you* discussed with it until you
-start a new one (`/new`), without mixing in a colleague's thread.
+**Each new message in the room starts a thread**, and the assistant answers
+inside it. To continue the same conversation (answer its question, add a
+detail, send the file it asked for), **reply in that thread**; a new message
+in the room starts a fresh conversation that does not know the earlier one.
+Everyone in the room can read every thread.
 It answers only people listed for that department; people from other
 departments cannot use your room's assistant.
 
@@ -77,7 +79,7 @@ Type these as a message on their own. Your account may run:
 |---|---|
 | `/help` | Lists the commands you can use |
 | `/whoami` | Shows your access level and your commands |
-| `/new` | Starts a fresh conversation with you (forgets your chat context here; asks to confirm) |
+| `/new` | Starts a fresh conversation in this thread (forgets its context; asks to confirm) |
 | `/retry` | Sends your last message again |
 | `/undo` | Takes back your last message and the answer to it |
 | `/stop` | Stops what the assistant is doing right now |
@@ -94,12 +96,43 @@ operators; the assistant says so if you try one.
 ### Tips
 
 - One request per message works best; say what "done" looks like.
+- To send a file with a request, attach it and write the request as the
+  file's caption, or send the file inside the thread.
 - While it works you see short status lines (for example "kanban_list…").
   Writing again while it works corrects the running task.
 - If nothing comes back within a minute, check that you joined the room
   (not just invited) and that Tailscale is on, then `/retry`.
 - Right after someone's access changed, the assistants restart for a few
   seconds; a message sent in exactly that moment may need a `/retry`.
+
+## HR: recruiting with the assistant
+
+In the **HR** room the assistant keeps the recruiting records: open roles,
+candidates with their CVs, and where each application stands. People
+decide; the assistant prepares and records.
+
+| You say | What happens |
+|---|---|
+| "Open a role from this JD" (with the file) | Creates the role with checkable must-haves; points out wording that could discriminate ("young team", "native speaker") |
+| "Add Erika Testfrau to the backend role" (with CV and certificates) | Records the candidate, stores the documents, creates the application at stage *new* |
+| "Shortlist the top 5 for the backend role" | Compares candidates on the role's criteria, on CVs with names and personal details hidden; the shortlist arrives in the Portal under **Artifacts** for review |
+| "Interview 1 with Erika done: …", "second round", "decision pending" | Moves the application along: new → reviewed → interviewed → decision → (another round) → hired / declined |
+| "Decline Max, reason: no Kubernetes experience" | Asks you to confirm, then records the decision with your name |
+| "Where are we with the backend role?" | Overview by stage, with what is waiting |
+| "Delete everything about Lena" | Deletes the candidate with all applications and documents, after you confirm |
+
+Good to know:
+
+- Send CVs as **PDF, DOCX or text** on the same day (uploads are cleared
+  after 24 hours). Photos are not stored.
+- The assistant never records birth date, age, photo, gender, nationality,
+  family, religion or health, and does not rank by them.
+- Candidate records are **deleted automatically 6 months** after the last
+  activity on them.
+- Hiring decisions are yours: the assistant will not decide or decline in
+  bulk for you.
+- Onboarding and offboarding checklists exist as **drafts**: ask for them,
+  but they do not keep records yet.
 
 ## Team Portal
 
@@ -168,6 +201,9 @@ invitations made in the app are withdrawn again.
 
 ## What's new
 
+- **2026-10-25 (afternoon)**: the **HR** room with recruiting support (roles,
+  candidates and CVs, shortlists, interview stages); how threads work in
+  Matrix.
 - **2026-10-25**: this guide in the Portal (**Help**); change your password
   in the Portal; Copy buttons for new accounts; owners manage people in the
   Portal; slash commands for everyone (see above).
