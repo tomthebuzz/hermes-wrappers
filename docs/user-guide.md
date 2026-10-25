@@ -115,6 +115,7 @@ decide; the assistant prepares and records.
 |---|---|
 | "Open a role from this JD" (with the file) | Creates the role with checkable must-haves; points out wording that could discriminate ("young team", "native speaker") |
 | "Add Erika Testfrau to the backend role" (with CV and certificates) | Records the candidate, stores the documents, creates the application at stage *new* |
+| "All applications for the backend role are in this ZIP" (then the ZIP in the thread) | Sorts the documents by person, shows you the plan, and after your yes adds every candidate with their documents. One ZIP is for one role: letters for another role are set aside for you to send separately |
 | "Shortlist the top 5 for the backend role" | Compares candidates on the role's criteria, on CVs with names and personal details hidden; the shortlist arrives in the Portal under **Artifacts** for review |
 | "Interview 1 with Erika done: …", "second round", "decision pending" | Moves the application along: new → reviewed → interviewed → decision → (another round) → hired / declined |
 | "Decline Max, reason: no Kubernetes experience" | Asks you to confirm, then records the decision with your name |
@@ -123,8 +124,9 @@ decide; the assistant prepares and records.
 
 Good to know:
 
-- Send CVs as **PDF, DOCX or text** on the same day (uploads are cleared
-  after 24 hours). Photos are not stored.
+- Send CVs as **PDF, DOCX or text**, singly or as a **ZIP** (up to 25 MB and
+  200 documents), on the same day (uploads are cleared after 24 hours).
+  Photos are not stored.
 - The assistant never records birth date, age, photo, gender, nationality,
   family, religion or health, and does not rank by them.
 - Candidate records are **deleted automatically 6 months** after the last
@@ -201,6 +203,8 @@ invitations made in the app are withdrawn again.
 
 ## What's new
 
+- **2026-10-25 (evening)**: HR takes a ZIP of applications for one role at
+  once.
 - **2026-10-25 (afternoon)**: the **HR** room with recruiting support (roles,
   candidates and CVs, shortlists, interview stages); how threads work in
   Matrix.
