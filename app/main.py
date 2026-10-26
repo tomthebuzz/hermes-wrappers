@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
 
-from . import config_loader, kanban_read, kanban_write, people
+from . import config_loader, kanban_read, kanban_write, people, team_read
 from .auth.magic_link import MagicLinkAuth, MatrixDM
 from .auth.matrix_password import PasswordChanger
 from .artifacts.sla import (SLA_DEADLINE_RE, deadline_after, find_deadline, find_due_date, is_overdue,
@@ -38,6 +38,7 @@ from .rbac import RBAC, UserScope
 # --- config (env-driven, container-friendly, no hardcoded host paths) ---
 KANBAN_DB_PATH = Path(os.environ.get("KANBAN_DB_PATH", "/data/kanban.db"))
 KANBAN_ATTACHMENTS_ROOT = Path(os.environ.get("KANBAN_ATTACHMENTS_ROOT", "/data/attachments"))
+TEAM_DB_PATH = Path(os.environ.get("TEAM_DB_PATH", "/team/ontology.db"))   # the team store, read-only (dashboard)
 USERS_YAML_PATH = Path(os.environ.get("USERS_YAML_PATH", "/config/users.yaml"))
 HERMES_BIN = os.environ.get("HERMES_BIN", "hermes")
 PORTAL_BASE_URL = os.environ.get("PORTAL_BASE_URL", "http://localhost:8080")
@@ -426,6 +427,62 @@ def board(user: UserScope = Depends(require_user)):
         t["due_date"] = due
         t["overdue"] = is_overdue(due) if due else False
     return {"tenants": tenants, "tasks": tasks}
+
+
+# --- dashboard (read) ---
+
+RECENT_DAYS = 7
+
+
+def _brief(t: dict) -> dict:
+    due = find_due_date(t)
+    return {"id": t["id"], "title": t.get("title"), "status": t.get("status"), "assignee": t.get("assignee"),
+            "updated_at": t.get("updated_at"), "due_date": due, "overdue": is_overdue(due) if due else False}
+
+
+@app.get("/api/dashboard")
+def dashboard(tenant: str | None = Query(default=None), user: UserScope = Depends(require_user)):
+    """The landing page: one tenant's objectives, KPIs, open work and approved
+    reviews; roll-up tiles for people who see every tenant. Reads the team
+    store and the board; writes come later through the bridge."""
+    board_tenants = kanban_read.distinct_tenants(KANBAN_DB_PATH)
+    readable = user.readable_tenants(sorted(set(board_tenants) | set(user.tenants)))
+    if not team_read.available(TEAM_DB_PATH):
+        return {"available": False, "tenants": readable, "tenant": tenant}
+    if tenant is None:
+        tenant = readable[0] if readable else None
+    if tenant is None or not user.can_read_tenant(tenant):
+        raise HTTPException(status_code=403, detail="Not in your scope")
+    tasks = kanban_read.list_tasks(KANBAN_DB_PATH, tenants=[tenant])
+    recent = int(__import__("time").time()) - RECENT_DAYS * 86400
+    work = {
+        "awaiting_my_approval": [_brief(t) for t in tasks if t.get("status") == "review"] if user.can_approve_tenant(tenant) else [],
+        "in_review": [_brief(t) for t in tasks if t.get("status") == "review"],
+        "blocked": [_brief(t) for t in tasks if t.get("status") == "blocked"],
+        "in_progress": [_brief(t) for t in tasks if t.get("status") == "running"],
+        "recently_done": [_brief(t) for t in tasks if t.get("status") in ("done", "archived")
+                          and (t.get("completed_at") or 0) >= recent][:8],
+    }
+    out = {
+        "available": True, "tenant": tenant, "tenants": readable,
+        "can_approve": user.can_approve_tenant(tenant),
+        "objectives": team_read.objectives(TEAM_DB_PATH, tenant),
+        "kpis": team_read.kpis(TEAM_DB_PATH, tenant),
+        "reviews": team_read.reviews(TEAM_DB_PATH, tenant),
+        "work": work,
+    }
+    if user.can_rollup:
+        tiles = []
+        for t in readable:
+            tt = kanban_read.list_tasks(KANBAN_DB_PATH, tenants=[t])
+            tile = team_read.tenant_summary(TEAM_DB_PATH, t)
+            tile["tenant"] = t
+            tile["board"] = {"open": sum(1 for x in tt if x.get("status") not in ("done", "archived")),
+                             "blocked": sum(1 for x in tt if x.get("status") == "blocked"),
+                             "review": sum(1 for x in tt if x.get("status") == "review")}
+            tiles.append(tile)
+        out["rollup"] = tiles
+    return out
 
 
 @app.get("/api/tasks/{task_id}")

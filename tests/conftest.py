@@ -92,7 +92,32 @@ for aid, tid, name in [(1, "t_tech1", "report.md"), (2, "t_sales1", "deal.md")]:
 conn.commit()
 conn.close()
 
-os.environ.update({"KANBAN_DB_PATH": str(DB), "KANBAN_ATTACHMENTS_ROOT": str(ATTACH), "USERS_YAML_PATH": str(USERS),
+# The team store (dashboard): objects + links as hermes-ontology keeps them.
+TEAM_DB = ROOT / "team" / "ontology.db"
+TEAM_DB.parent.mkdir()
+tconn = sqlite3.connect(TEAM_DB)
+tconn.executescript("CREATE TABLE objects(id TEXT PRIMARY KEY, type TEXT, data TEXT, lawful_basis TEXT, source TEXT,"
+                    " created_at INTEGER, updated_at INTEGER, expires_at INTEGER);"
+                    "CREATE TABLE links(rel TEXT, from_id TEXT, to_id TEXT, created_at INTEGER);")
+import json as _json  # noqa: E402
+for oid, ty, data in [
+    ("obj_t1", "Objective", {"tenant": "tech", "title": "Ship faster", "period": "2026-Q4", "status": "active", "owner": "Alice"}),
+    ("kr_t1", "KeyResult", {"title": "Cycle time", "start": 72, "target": 24, "current": 40, "unit": "h", "measure": "board",
+                            "metric": "board.cycle_time_p50_h", "status": "at_risk"}),
+    ("m_1", "Measurement", {"value": 60, "at": "2026-10-01T06:00:00Z", "method": "cron", "actor": "measure"}),
+    ("m_2", "Measurement", {"value": 40, "at": "2026-10-08T06:00:00Z", "method": "cron", "actor": "measure"}),
+    ("kpi_t1", "KPI", {"tenant": "tech", "title": "Throughput", "current": 5, "target": 4, "status": "ok", "measure": "board", "unit": "cards"}),
+    ("kpi_s1", "KPI", {"tenant": "sales", "title": "Leads", "current": 2, "target": 10, "status": "crit", "measure": "manual"}),
+    ("rev_t1", "Review", {"tenant": "tech", "week": "2026-W43", "status": "approved", "summary": "Cycle time fell."}),
+    ("rev_t2", "Review", {"tenant": "tech", "week": "2026-W44", "status": "pending", "summary": "draft"}),
+]:
+    tconn.execute("INSERT INTO objects(id, type, data, source, created_at, updated_at) VALUES (?,?,?,'t',?,?)", (oid, ty, _json.dumps(data), now, now))
+for rel, f, t in [("key_results", "obj_t1", "kr_t1"), ("kr_measurements", "kr_t1", "m_1"), ("kr_measurements", "kr_t1", "m_2")]:
+    tconn.execute("INSERT INTO links VALUES (?,?,?,?)", (rel, f, t, now))
+tconn.commit()
+tconn.close()
+
+os.environ.update({"KANBAN_DB_PATH": str(DB), "KANBAN_ATTACHMENTS_ROOT": str(ATTACH), "USERS_YAML_PATH": str(USERS), "TEAM_DB_PATH": str(TEAM_DB),
                    "SESSION_SECRET": "test-secret-0123456789", "PORTAL_BASE_URL": "http://portal.test",
                    "SHARED_CONFIG_DIR": str(Path(__file__).resolve().parents[1] / "config")})
 os.environ.pop("HERMES_BRIDGE_URL", None)

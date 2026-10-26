@@ -138,6 +138,28 @@ Good to know:
 
 ## Team Portal
 
+### Dashboard (your landing page)
+
+The Portal opens on your team's dashboard. Pick another team at the top if
+you belong to several; leadership sees a tile per team first.
+
+- **Objectives** for the period (quarter) with their **key results**: the
+  current value against the target, a progress bar and a status: *on track*,
+  *at risk* or *off track* against where the quarter line is today, *done*
+  at 100 %.
+- **KPIs**: the numbers the team watches continuously, with a trend line and
+  a colour: green within target, amber past the warning threshold, red past
+  the critical one. Board KPIs (cards completed, cycle time, cards in review)
+  and HR KPIs (open roles, pipeline size, time to hire: counts only, never a
+  person) are measured automatically every hour when something changed and
+  every morning at 06:00.
+- **Work**: cards awaiting your approval, blocked, in progress and done this
+  week. Click one to open it.
+- **Weekly reviews**: the team assistant's approved review of the week.
+
+Defining objectives and KPIs and checking in values comes in the next
+update; until then the team owner records them with the assistant in chat.
+
 ### The board
 
 Columns follow the work: **Triage** (new ideas the assistant will shape),
@@ -203,6 +225,7 @@ invitations made in the app are withdrawn again.
 
 ## What's new
 
+- **2026-10-26 (afternoon)**: the **Dashboard** is the Portal's landing page: your team's objectives, key results, KPIs with trends, open work and weekly reviews.
 - **2026-10-26**: text you enter in the Portal is checked for hidden
   (invisible) characters, which can carry instructions for a bot that nobody
   sees; they are removed and the Portal tells you. Department digests now
