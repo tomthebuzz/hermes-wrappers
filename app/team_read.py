@@ -207,3 +207,14 @@ def tasks_serving(db_path: Path, tenant: str) -> dict:
         return by_kr
     finally:
         conn.close()
+
+
+def sources(db_path: Path, tenant: str) -> list[dict]:
+    """Registered sources of a tenant (never a secret: only its name)."""
+    conn = _connect(db_path)
+    try:
+        out = [x for x in _objects(conn, "Source") if x.get("tenant") == tenant]
+        out.sort(key=lambda x: x.get("name", ""))
+        return out
+    finally:
+        conn.close()

@@ -471,6 +471,7 @@ def dashboard(tenant: str | None = Query(default=None), user: UserScope = Depend
         "reviews": team_read.reviews(TEAM_DB_PATH, tenant),
         "work": work,
         "serving": team_read.tasks_serving(TEAM_DB_PATH, tenant),
+        "sources": team_read.sources(TEAM_DB_PATH, tenant) if user.can_approve_tenant(tenant) else [],
     }
     if user.can_rollup:
         tiles = []
@@ -488,7 +489,7 @@ def dashboard(tenant: str | None = Query(default=None), user: UserScope = Depend
 
 # --- dashboard (write: through the bridge) ---
 
-OKR_TYPES = {"Objective", "KeyResult", "KPI"}
+OKR_TYPES = {"Objective", "KeyResult", "KPI", "Source"}
 
 
 class OkrObjectRequest(BaseModel):
@@ -532,7 +533,7 @@ def require_team_owner(user: UserScope, tenant: str | None) -> None:
 @app.post("/api/okr/objects")
 def okr_upsert(body: OkrObjectRequest, user: UserScope = Depends(require_user)):
     if body.type not in OKR_TYPES:
-        raise HTTPException(status_code=422, detail="type must be Objective, KeyResult or KPI")
+        raise HTTPException(status_code=422, detail="type must be Objective, KeyResult, KPI or Source")
     if body.type == "KeyResult" and not body.id and not body.objective_id:
         raise HTTPException(status_code=422, detail="a new key result needs objective_id")
     reject_reserved_markers(*[v for v in body.data.values() if isinstance(v, str)])
