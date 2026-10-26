@@ -89,6 +89,7 @@ class RBAC:
         self._path = users_yaml_path
         self._by_key: dict[str, UserScope] = {}
         self._by_username: dict[str, UserScope] = {}
+        self._by_localpart: dict[str, list[UserScope]] = {}
         self._by_matrix: dict[str, UserScope] = {}
         self._mtime = 0.0
         self.reload()
@@ -118,6 +119,7 @@ class RBAC:
         by_key: dict[str, UserScope] = {}
         by_username: dict[str, UserScope] = {}
         by_matrix: dict[str, UserScope] = {}
+        by_localpart: dict[str, list[UserScope]] = {}
         for entry in data.get("users", []):
             username = normalize_username(entry.get("telegram_username"))
             matrix_id = normalize_matrix_id(entry.get("matrix_id"))
@@ -140,9 +142,11 @@ class RBAC:
                 by_username[username] = scope
             if matrix_id:
                 by_matrix[matrix_id] = scope
+                by_localpart.setdefault(matrix_id[1:].split(":", 1)[0], []).append(scope)
         self._by_key = by_key
         self._by_username = by_username
         self._by_matrix = by_matrix
+        self._by_localpart = by_localpart
         self._mtime = mtime
 
     def get(self, key: str | int) -> Optional[UserScope]:
@@ -154,8 +158,10 @@ class RBAC:
         return list(self._by_key.values())
 
     def resolve_login(self, login: str) -> Optional[UserScope]:
-        """Resolve a login string: @username preferred, numeric ID accepted
-        for backwards compatibility and recovery."""
+        """Resolve a login string: a full Matrix ID, else '@name' / 'name'
+        as a Telegram username or as the localpart of a Matrix ID (when it
+        names exactly one person), numeric Telegram ID accepted for
+        backwards compatibility and recovery."""
         raw = str(login).strip()
         if not raw:
             return None
@@ -165,7 +171,11 @@ class RBAC:
             return self._by_matrix.get(matrix_id)
         username = normalize_username(raw)
         if username and not raw.isdigit():
-            return self._by_username.get(username)
+            found = self._by_username.get(username)
+            if found is None:
+                candidates = self._by_localpart.get(username, [])
+                found = candidates[0] if len(candidates) == 1 else None
+            return found
         try:
             return self._by_key.get(str(int(raw)))
         except ValueError:

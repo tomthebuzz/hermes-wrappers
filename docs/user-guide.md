@@ -30,7 +30,8 @@ must be switched on).
    (and a direct message from **Portal**, which delivers your Portal login
    links). Until you accept, you are not in the room and the assistant cannot
    see what you write.
-5. **Sign in to the Portal** at `https://{{HOST}}:10000` with your Matrix ID.
+5. **Sign in to the Portal** at `https://{{HOST}}:10000` with your user name
+   (`@name`; the full Matrix ID works too).
    A login link arrives as a direct message from Portal; open it within 10
    minutes. On another device than the one that asked, the Portal asks you to
    confirm first.
@@ -260,6 +261,7 @@ invitations made in the app are withdrawn again.
 ## What's new
 
 - **2026-10-26 (afternoon)**: the **Dashboard** is the Portal's landing page: your team's objectives, key results, KPIs with trends, open work and weekly reviews. Team owners define them there; everyone checks in values.
+- **2026-10-26 (late)**: Portal login takes your plain user name (`@name`); the full Matrix ID is no longer needed.
 - **2026-10-26 (evening)**: the assistant writes a **weekly review** every Monday for approval, and reminds the room of missing check-ins on Fridays; cards have **stakeholders** (owner, reviewers, watchers), can **serve a key result**, and get **a thread in the team room** where their events and your comments land.
 - **2026-10-26**: text you enter in the Portal is checked for hidden
   (invisible) characters, which can carry instructions for a bot that nobody

@@ -72,6 +72,8 @@ def test_rbac_resolves_handles_ids_and_matrix_ids():
     assert rbac.resolve_login("@Alice").name == "Alice Tech"
     assert rbac.resolve_login("101").name == "Alice Tech"
     assert rbac.resolve_login("@mia:HS.TEST").name == "Mia Ops"
+    assert rbac.resolve_login("@Mia").name == "Mia Ops" and rbac.resolve_login("mia").name == "Mia Ops"
+    assert rbac.resolve_login("@nobody") is None
     assert rbac.get(101).key == "101" and rbac.get("@mia:hs.test").key == "@mia:hs.test"
     assert normalize_matrix_id("@x") is None and normalize_matrix_id("mia:hs") is None
 
@@ -144,3 +146,20 @@ def test_access_log_never_holds_login_tokens():
     rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s"', ("1.2.3.4", "GET", "/login/verify?token=SECRET123"), None)
     _RedactTokens().filter(rec)
     assert "SECRET123" not in rec.getMessage() and "token=<redacted>" in rec.getMessage()
+
+
+def test_a_bare_name_that_matches_two_matrix_accounts_resolves_to_neither(tmp_path: Path):
+    users = tmp_path / "users.yaml"
+    users.write_text("users:\n"
+                     "  - {matrix_id: '@kim:a.test', name: Kim A, tenants: [tech]}\n"
+                     "  - {matrix_id: '@kim:b.test', name: Kim B, tenants: [ops]}\n")
+    rbac = RBAC(users)
+    assert rbac.resolve_login("@kim") is None
+    assert rbac.resolve_login("@kim:b.test").name == "Kim B"
+
+
+def test_a_bare_name_delivers_the_matrix_login_link(calls, matrix_login):
+    r = client_as(None).post("/login", json={"login": "@mia"})
+    assert r.status_code == 200
+    (user, _text), = matrix_login.sent
+    assert user == "@mia:hs.test"

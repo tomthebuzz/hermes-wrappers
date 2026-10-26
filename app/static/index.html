@@ -17,7 +17,7 @@ button.danger{background:#7a2a24;color:#fff}ul.plain{list-style:none;padding:0;m
 .review{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px;white-space:pre-wrap}.empty{color:var(--muted);padding:8px 0}
 </style></head>
 <body>
-<div id="login-screen"><h2>Team Portal</h2><p>Sign in with your Telegram @username or your Matrix ID (@name:server).</p><input id="login-id" placeholder="@username or @name:server"><button onclick="requestLogin()">Send login link</button><p id="login-status" class="status"></p><p class="muted">New here? <a href="/help" target="_blank">Read the guide</a>.</p></div>
+<div id="login-screen"><h2>Team Portal</h2><p>Sign in with your user name (<code>@name</code>) or your full Matrix ID.</p><input id="login-id" placeholder="@name" autocapitalize="off"><button onclick="requestLogin()">Send login link</button><p id="login-status" class="status"></p><p class="muted">New here? <a href="/help" target="_blank">Read the guide</a>.</p></div>
 <div id="app" class="hidden">
 <header><nav><a onclick="showView('dashboard')">Dashboard</a><a onclick="showView('board')">Kanban</a><a onclick="showView('artifacts')">Artifacts</a></nav><nav><a href="/help" target="_blank">Help</a><a id="nav-people" class="hidden" onclick="showView('people')">People</a><a onclick="showView('profile')">Profile</a><a onclick="logout()">Log out</a></nav></header>
 <main><section id="dashboard-view" class="hidden dash"></section><section id="board-view"></section><section id="artifacts-view" class="hidden"></section><section id="people-view" class="hidden profile"></section><section id="profile-view" class="hidden profile"></section></main></div>
