@@ -66,3 +66,7 @@ def checkin(target_id: str, value: float, actor: str, reason: str, note: str = "
 
 def link(rel: str, from_id: str, to_id: str, actor: str, reason: str) -> StoreResult:
     return _post("/okr/links", {"rel": rel, "from_id": from_id, "to_id": to_id, "actor": actor, "reason": reason})
+
+
+def move(object_id: str, tenant: str, actor: str, reason: str) -> StoreResult:
+    return _post(f"/okr/objects/{object_id}/move", {"tenant": tenant, "actor": actor, "reason": reason})

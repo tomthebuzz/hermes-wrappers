@@ -421,12 +421,32 @@ def board(user: UserScope = Depends(require_user)):
     all_tenants = kanban_read.distinct_tenants(KANBAN_DB_PATH)
     tenants = user.readable_tenants(all_tenants)
     tasks = kanban_read.list_tasks(KANBAN_DB_PATH, tenants=tenants)
+    lanes, by_task = _lanes_of(tenants)
     for t in tasks:
         t["comments"] = kanban_read.list_comments(KANBAN_DB_PATH, t["id"])
         due = find_due_date(t)
         t["due_date"] = due
         t["overdue"] = is_overdue(due) if due else False
-    return {"tenants": tenants, "tasks": tasks}
+        _put_lane(t, lanes, by_task)
+    return {"tenants": tenants, "tasks": tasks, "lanes": lanes}
+
+
+def _lanes_of(tenants: list[str]) -> tuple[dict, dict]:
+    """{tenant: [lanes]} and {task id: TaskLane} from the team store; empty
+    without a store."""
+    if not team_read.available(TEAM_DB_PATH):
+        return {}, {}
+    return {t: team_read.swimlanes(TEAM_DB_PATH, t) for t in tenants}, team_read.task_lanes(TEAM_DB_PATH)
+
+
+def _put_lane(task: dict, lanes: dict, by_task: dict) -> None:
+    """The card's lane (id, name, color) when it has one that still exists
+    in its team; a lane deleted or archived counts as no lane."""
+    tl = by_task.get(task["id"])
+    lane = next((l for l in lanes.get(task.get("tenant"), []) if tl and l["id"] == tl["lane"]), None)
+    task["lane"] = lane["id"] if lane else None
+    task["lane_name"] = lane.get("name") if lane else None
+    task["lane_color"] = lane.get("color") if lane else None
 
 
 # --- dashboard (read) ---
@@ -472,6 +492,8 @@ def dashboard(tenant: str | None = Query(default=None), user: UserScope = Depend
         "work": work,
         "serving": team_read.tasks_serving(TEAM_DB_PATH, tenant),
         "sources": team_read.sources(TEAM_DB_PATH, tenant) if user.can_approve_tenant(tenant) else [],
+        "lanes": _lane_rows(tenant, tasks, include_archived=user.can_approve_tenant(tenant)),
+        "movable_to": [t for t in readable if t != tenant] if user.can_approve_tenant(tenant) else [],
     }
     if user.can_rollup:
         tiles = []
@@ -487,9 +509,23 @@ def dashboard(tenant: str | None = Query(default=None), user: UserScope = Depend
     return out
 
 
+def _lane_rows(tenant: str, tasks: list[dict], include_archived: bool = False) -> list[dict]:
+    """The team's lanes with how many open cards each holds."""
+    lanes = team_read.swimlanes(TEAM_DB_PATH, tenant, include_archived=include_archived)
+    by_task = team_read.task_lanes(TEAM_DB_PATH)
+    open_count: dict[str, int] = {}
+    for t in tasks:
+        tl = by_task.get(t["id"])
+        if tl and t.get("status") not in ("done", "archived"):
+            open_count[tl["lane"]] = open_count.get(tl["lane"], 0) + 1
+    for lane in lanes:
+        lane["open_cards"] = open_count.get(lane["id"], 0)
+    return lanes
+
+
 # --- dashboard (write: through the bridge) ---
 
-OKR_TYPES = {"Objective", "KeyResult", "KPI", "Source"}
+OKR_TYPES = {"Objective", "KeyResult", "KPI", "Source", "Swimlane"}
 
 
 class OkrObjectRequest(BaseModel):
@@ -540,7 +576,7 @@ def okr_upsert(body: OkrObjectRequest, user: UserScope = Depends(require_user)):
     tenant = _okr_tenant(body)
     require_team_owner(user, tenant)
     if "tenant" in body.data and body.data["tenant"] != tenant:
-        raise HTTPException(status_code=403, detail="an object cannot move to another team")
+        raise HTTPException(status_code=403, detail="use 'move to team' to change the team")
     result = team_write.upsert(body.type, body.data, actor=user.name, reason=body.reason[:200] or "dashboard",
                                object_id=body.id, objective_id=None if body.id else body.objective_id)
     return _store_result(result)
@@ -550,6 +586,24 @@ def okr_upsert(body: OkrObjectRequest, user: UserScope = Depends(require_user)):
 def okr_delete(object_id: str, user: UserScope = Depends(require_user)):
     require_team_owner(user, team_read.tenant_of(TEAM_DB_PATH, object_id))
     return _store_result(team_write.delete(object_id, actor=user.name, reason="deleted from the dashboard"))
+
+
+class MoveRequest(BaseModel):
+    tenant: str
+
+
+@app.post("/api/okr/objects/{object_id}/move")
+def okr_move(object_id: str, body: MoveRequest, user: UserScope = Depends(require_user)):
+    """An owner of the current team moves an objective (with its key results
+    and the KPIs that name it), a KPI, a source or a lane to another team
+    they belong to; the target team's owners see it on their dashboard."""
+    source = team_read.tenant_of(TEAM_DB_PATH, object_id)
+    require_team_owner(user, source)
+    if not user.can_read_tenant(body.tenant):
+        raise HTTPException(status_code=403, detail="You are not a member of that team")
+    if body.tenant == source:
+        raise HTTPException(status_code=422, detail="Already in that team")
+    return _store_result(team_write.move(object_id, body.tenant, actor=user.name, reason=f"moved from {source} to {body.tenant}"))
 
 
 @app.post("/api/okr/checkin")
@@ -661,6 +715,44 @@ def remove_stakeholder(task_id: str, link_id: str, user: UserScope = Depends(req
     return _store_result(team_write.delete(link_id, actor=user.name, reason=f"stakeholder removed from {task_id}"))
 
 
+@app.get("/api/lanes")
+def lane_options(tenant: str = Query(...), user: UserScope = Depends(require_user)):
+    if not user.can_read_tenant(tenant):
+        raise HTTPException(status_code=403, detail="Not in your scope")
+    if not team_read.available(TEAM_DB_PATH):
+        return {"lanes": []}
+    return {"lanes": [{"id": l["id"], "name": l.get("name"), "color": l.get("color")} for l in team_read.swimlanes(TEAM_DB_PATH, tenant)]}
+
+
+class LaneRequest(BaseModel):
+    lane: str | None = None       # Swimlane id; null takes the card out of its lane
+
+
+def _set_lane(task_id: str, tenant: str, lane_id: str | None, user: UserScope) -> dict | None:
+    """One TaskLane per card: update it, create it, or delete it for null.
+    The lane must be one of the card's team."""
+    if lane_id and not any(l["id"] == lane_id for l in team_read.swimlanes(TEAM_DB_PATH, tenant)):
+        raise HTTPException(status_code=422, detail="That lane is not one of this team's")
+    current = team_read.task_lanes(TEAM_DB_PATH).get(task_id)
+    if lane_id is None:
+        if current is None:
+            return None
+        return _store_result(team_write.delete(current["id"], actor=user.name, reason=f"{task_id} taken out of its lane"))
+    return _store_result(team_write.upsert("TaskLane", {"task_id": task_id, "tenant": tenant, "lane": lane_id},
+                                           actor=user.name, reason=f"{task_id} put in a lane", object_id=current["id"] if current else None))
+
+
+@app.post("/api/tasks/{task_id}/lane")
+def set_task_lane(task_id: str, body: LaneRequest, user: UserScope = Depends(require_user)):
+    """Any member of the card's team puts it in one of the team's lanes."""
+    task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
+    if task is None or not user.can_read_tenant(task.get("tenant", "")):
+        raise HTTPException(status_code=403, detail="Not in your scope")
+    if not team_read.available(TEAM_DB_PATH):
+        raise HTTPException(status_code=503, detail="The team records are not set up on this instance")
+    return _set_lane(task_id, task.get("tenant", ""), body.lane, user) or {"ok": True}
+
+
 @app.get("/api/tasks/{task_id}")
 def task_detail(task_id: str, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
@@ -675,6 +767,9 @@ def task_detail(task_id: str, user: UserScope = Depends(require_user)):
     task["can_review"] = _may_review(user, task, links)
     task["can_name_stakeholders"] = user.can_approve_tenant(task.get("tenant", ""))
     task["thread_url"] = _element_thread_url(team_read.task_thread(TEAM_DB_PATH, task_id)) if team_read.available(TEAM_DB_PATH) else None
+    lanes, by_task = _lanes_of([task.get("tenant", "")])
+    _put_lane(task, lanes, by_task)
+    task["lanes"] = [{"id": l["id"], "name": l.get("name"), "color": l.get("color")} for l in lanes.get(task.get("tenant", ""), [])]
     task["sla_deadline"] = review_deadline(task) if task.get("status") == "review" else find_deadline(task)
     task["autonomy_level"] = config_loader.autonomy_level(task_skills(task))
     task["due_date"] = find_due_date(task)
@@ -824,6 +919,7 @@ def add_comment(task_id: str, body: CommentRequest, user: UserScope = Depends(re
 
 class CreateTaskRequest(BaseModel):
     key_result: str | None = None      # the new card serves this key result
+    lane: str | None = None            # Swimlane id of the card's team
     title: str
     tenant: str
     body: str = ""
@@ -845,18 +941,23 @@ def create_task(body: CreateTaskRequest, user: UserScope = Depends(require_user)
     check_assignee(body.assignee)
     if body.key_result and team_read.available(TEAM_DB_PATH) and team_read.tenant_of(TEAM_DB_PATH, body.key_result) != body.tenant:
         raise HTTPException(status_code=422, detail="That key result belongs to another team")
+    if body.lane and team_read.available(TEAM_DB_PATH) and not any(l["id"] == body.lane for l in team_read.swimlanes(TEAM_DB_PATH, body.tenant)):
+        raise HTTPException(status_code=422, detail="That lane is not one of this team's")
     result = kanban_write.create_task(HERMES_BIN, body.title, body.tenant, body.body,
                                       body.assignee, body.status, body.priority)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
     out = ok_result(result)
     task_id = _created_id(result.stdout)
-    if task_id and user.matrix_id and team_read.available(TEAM_DB_PATH):
-        # the creator owns the card; the owner's link is what serves a key result
-        link = team_write.upsert("TaskLink", {"task_id": task_id, "person": user.name, "matrix_id": user.matrix_id, "role": "owner"},
-                                 actor=user.name, reason=f"created {task_id}")
-        if link.ok and body.key_result:
-            team_write.link("serves", link.object["id"], body.key_result, actor=user.name, reason=f"{task_id} serves a key result")
+    if task_id and team_read.available(TEAM_DB_PATH):
+        if user.matrix_id:
+            # the creator owns the card; the owner's link is what serves a key result
+            link = team_write.upsert("TaskLink", {"task_id": task_id, "person": user.name, "matrix_id": user.matrix_id, "role": "owner"},
+                                     actor=user.name, reason=f"created {task_id}")
+            if link.ok and body.key_result:
+                team_write.link("serves", link.object["id"], body.key_result, actor=user.name, reason=f"{task_id} serves a key result")
+        if body.lane:
+            team_write.upsert("TaskLane", {"task_id": task_id, "tenant": body.tenant, "lane": body.lane}, actor=user.name, reason=f"{task_id} created in a lane")
         out["task_id"] = task_id
     return out
 
@@ -961,6 +1062,27 @@ def artifact_review_queue(user: UserScope = Depends(require_user)):
         t["autonomy_level"] = config_loader.autonomy_level(task_skills(t))
         t["auto_approves"] = auto_approves(t)
     return {"tasks": tasks}
+
+
+@app.get("/api/artifacts/files")
+def artifact_files(user: UserScope = Depends(require_user)):
+    """Every file attached to a card the user can see, with the card's team,
+    lane, status, owner (initiator) and reviewers, newest first. Filtering
+    and sorting happen in the page; this is the whole list."""
+    tenants = user.readable_tenants(kanban_read.distinct_tenants(KANBAN_DB_PATH))
+    rows = kanban_read.list_all_attachments(KANBAN_DB_PATH, tenants=tenants)
+    lanes, by_task = _lanes_of(tenants)
+    links = team_read.task_links_many(TEAM_DB_PATH) if team_read.available(TEAM_DB_PATH) else {}
+    for r in rows:
+        tl = by_task.get(r["task_id"])
+        lane = next((l for l in lanes.get(r.get("tenant"), []) if tl and l["id"] == tl["lane"]), None)
+        r["lane"] = lane["id"] if lane else None
+        r["lane_name"] = lane.get("name") if lane else None
+        people = links.get(r["task_id"], [])
+        owners = [p["person"] for p in people if p.get("role") == "owner" and p.get("person")]
+        r["owner"] = owners[0] if owners else (r.get("uploaded_by") or r.get("created_by") or r.get("assignee"))
+        r["reviewers"] = sorted({p["person"] for p in people if p.get("role") == "reviewer" and p.get("person")})
+    return {"files": rows, "lanes": lanes}
 
 
 class PublishArtifactRequest(BaseModel):

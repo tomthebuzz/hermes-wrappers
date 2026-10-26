@@ -218,3 +218,43 @@ def sources(db_path: Path, tenant: str) -> list[dict]:
         return out
     finally:
         conn.close()
+
+
+def swimlanes(db_path: Path, tenant: str, include_archived: bool = False) -> list[dict]:
+    """A team's lanes in board order (lowest `order` first, then name)."""
+    conn = _connect(db_path)
+    try:
+        out = [x for x in _objects(conn, "Swimlane") if x.get("tenant") == tenant
+               and (include_archived or x.get("status", "active") != "archived")]
+        out.sort(key=lambda x: (float(x.get("order") or 0), (x.get("name") or "").lower()))
+        return out
+    finally:
+        conn.close()
+
+
+def task_lanes(db_path: Path) -> dict:
+    """task id -> {"id": TaskLane object id, "lane": Swimlane id}. One lane
+    per card; the newest record wins if a card ever has two."""
+    conn = _connect(db_path)
+    try:
+        out: dict[str, dict] = {}
+        for x in reversed(_objects(conn, "TaskLane")):      # oldest first, newest overwrites
+            if x.get("task_id") and x.get("lane"):
+                out[x["task_id"]] = {"id": x["id"], "lane": x["lane"]}
+        return out
+    finally:
+        conn.close()
+
+
+def task_links_many(db_path: Path) -> dict:
+    """task id -> stakeholders (person, matrix_id, role), for lists."""
+    conn = _connect(db_path)
+    try:
+        out: dict[str, list] = {}
+        for link in _objects(conn, "TaskLink"):
+            if link.get("task_id"):
+                out.setdefault(link["task_id"], []).append(
+                    {"id": link["id"], "person": link.get("person"), "matrix_id": link.get("matrix_id"), "role": link.get("role")})
+        return out
+    finally:
+        conn.close()

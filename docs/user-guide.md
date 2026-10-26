@@ -184,6 +184,19 @@ a direction. **Measured by** decides who fills the value:
 records keep who deleted what and when. You can also ask the team assistant
 in chat ("how are we doing on the objectives?", "check in: leads = 42").
 
+**Moving to another team.** Created something in the wrong team? *Move to
+team* on an objective takes it, its key results with their history and the
+KPIs that belong to it (a KPI's *Objective* field) to a team you are a
+member of; *move* on a KPI moves that one alone. The other team's owners
+see it on their dashboard right away.
+
+**Swimlanes (team owners).** Each team defines its own lanes for the
+board: the streams of work it runs (a product, a client, a recurring
+duty). A lane can point at the objective it works towards and the KPI it
+moves; the dashboard lists each lane with its open cards, and *board* next
+to it opens the board filtered to that lane. Archive a lane you no longer
+use; its cards stay, just without a lane.
+
 ### The board
 
 Columns follow the work: **Triage** (new ideas the assistant will shape),
@@ -195,6 +208,12 @@ Columns follow the work: **Triage** (new ideas the assistant will shape),
 - Drag cards between columns. Some moves are not allowed (only reviewers
   complete a card or move it out of Review); the Portal says why.
 - Click a card for details, comments and attached files (up to 25 MB).
+- **Lanes.** When the team has swimlanes, each column groups its cards by
+  lane (colour stripe and name), cards without a lane last. Pick the lane
+  when you create a card or change it on the card; any team member can.
+- **Filters** at the top take several values each: pick a team, a user,
+  a lane, a due window or a priority from the drop-down and it becomes a
+  chip; pick more to widen, × on a chip to drop it, *Clear* to reset.
 - **Stakeholders** on a card: an *owner* (accountable), *reviewers* and
   *watchers*. Anyone in the team can follow a card as a watcher; people
   with approval rights name owners and reviewers. When a card names
@@ -211,7 +230,13 @@ You see your own departments' cards only (leadership sees all).
 
 ### Reviewing drafts (Artifacts)
 
-**Artifacts** lists the cards waiting in Review that you may see.
+**Artifacts** opens with the cards waiting in Review that you may see,
+and below them **All artifacts**: every file attached to any card you can
+see (the assistants attach their drafts as `.md` files), with the card,
+team, lane, status, owner (the card's owner, else who uploaded or created
+it) and named reviewers. Filter by team, lane, owner, reviewer, status and
+date range; click a column header to sort. Open the file in the browser or
+download it; click the card to review.
 
 - Open the attachment (PDFs, images and plain text preview in the browser;
   other files download).
@@ -262,6 +287,7 @@ invitations made in the app are withdrawn again.
 
 - **2026-10-26 (afternoon)**: the **Dashboard** is the Portal's landing page: your team's objectives, key results, KPIs with trends, open work and weekly reviews. Team owners define them there; everyone checks in values.
 - **2026-10-26 (late)**: Portal login takes your plain user name (`@name`); the full Matrix ID is no longer needed.
+- **2026-10-26 (night)**: **swimlanes** per team on the board (owners define them on the dashboard, linked to an objective and a KPI), **move** objectives and KPIs to another team, **All artifacts** list with filters, and board filters that take **several values** as chips.
 - **2026-10-26 (evening)**: the assistant writes a **weekly review** every Monday for approval, and reminds the room of missing check-ins on Fridays; cards have **stakeholders** (owner, reviewers, watchers), can **serve a key result**, and get **a thread in the team room** where their events and your comments land.
 - **2026-10-26**: text you enter in the Portal is checked for hidden
   (invisible) characters, which can carry instructions for a bot that nobody

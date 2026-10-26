@@ -163,3 +163,22 @@ def get_attachment(db_path: Path, attachment_id: int) -> Optional[dict]:
         return dict(row) if row else None
     finally:
         conn.close()
+
+def list_all_attachments(db_path: Path, tenants: Optional[list]) -> list[dict]:
+    """Every attachment of the tenants' cards with the card's title, status,
+    team, assignee and creator; newest first. tenants=None: all; []: none."""
+    if tenants is not None and not tenants:
+        return []
+    conn = _connect(db_path)
+    try:
+        sql = """SELECT a.id, a.task_id, a.filename, a.content_type, a.size, a.uploaded_by, a.created_at,
+                        t.title AS task_title, t.status, t.tenant, t.assignee, t.created_by
+                 FROM task_attachments a JOIN tasks t ON t.id = a.task_id"""
+        params: list = []
+        if tenants is not None:
+            sql += " WHERE t.tenant IN (%s)" % ",".join("?" for _ in tenants)
+            params.extend(tenants)
+        sql += " ORDER BY a.created_at DESC, a.id DESC"
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    finally:
+        conn.close()
