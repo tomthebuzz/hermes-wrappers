@@ -79,7 +79,7 @@ conn = sqlite3.connect(DB)
 conn.executescript((Path(__file__).parent / "kanban_schema.sql").read_text())
 now = 1_790_000_000
 for tid, tenant, status in [("t_tech1", "tech", "review"), ("t_tech2", "tech", "ready"),
-                            ("t_sales1", "sales", "ready"), ("t_ops1", "ops", "review")]:
+                            ("t_sales1", "sales", "ready"), ("t_ops1", "ops", "review"), ("t_tech3", "tech", "review")]:
     conn.execute("INSERT INTO tasks(id, title, body, status, tenant, priority, created_by, created_at, workspace_kind)"
                  " VALUES (?,?,?,?,?,0,'user',?,'scratch')", (tid, f"Task {tid}", "body", status, tenant, now))
 conn.execute("INSERT INTO task_events(task_id, kind, payload, created_at) VALUES ('t_tech1','review_requested','{}',?)", (now,))
@@ -110,9 +110,13 @@ for oid, ty, data in [
     ("kpi_s1", "KPI", {"tenant": "sales", "title": "Leads", "current": 2, "target": 10, "status": "crit", "measure": "manual"}),
     ("rev_t1", "Review", {"tenant": "tech", "week": "2026-W43", "status": "approved", "summary": "Cycle time fell."}),
     ("rev_t2", "Review", {"tenant": "tech", "week": "2026-W44", "status": "pending", "summary": "draft"}),
+    ("tl_1", "TaskLink", {"task_id": "t_tech3", "person": "Lea Lead", "matrix_id": "@lead:hs.test", "role": "reviewer"}),
+    ("tl_2", "TaskLink", {"task_id": "t_tech1", "person": "Tim Tech", "matrix_id": "@tim:hs.test", "role": "owner"}),
+    ("tt_1", "TaskThread", {"task_id": "t_tech1", "tenant": "tech", "room_id": "!tech:hs.test", "event_id": "$abc"}),
 ]:
     tconn.execute("INSERT INTO objects(id, type, data, source, created_at, updated_at) VALUES (?,?,?,'t',?,?)", (oid, ty, _json.dumps(data), now, now))
-for rel, f, t in [("key_results", "obj_t1", "kr_t1"), ("kr_measurements", "kr_t1", "m_1"), ("kr_measurements", "kr_t1", "m_2")]:
+for rel, f, t in [("key_results", "obj_t1", "kr_t1"), ("kr_measurements", "kr_t1", "m_1"), ("kr_measurements", "kr_t1", "m_2"),
+                  ("serves", "tl_2", "kr_t1")]:
     tconn.execute("INSERT INTO links VALUES (?,?,?,?)", (rel, f, t, now))
 tconn.commit()
 tconn.close()

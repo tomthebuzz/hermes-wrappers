@@ -189,6 +189,17 @@ Columns follow the work: **Triage** (new ideas the assistant will shape),
 - Drag cards between columns. Some moves are not allowed (only reviewers
   complete a card or move it out of Review); the Portal says why.
 - Click a card for details, comments and attached files (up to 25 MB).
+- **Stakeholders** on a card: an *owner* (accountable), *reviewers* and
+  *watchers*. Anyone in the team can follow a card as a watcher; people
+  with approval rights name owners and reviewers. When a card names
+  reviewers, only they can approve it. A card can *serve a key result*
+  (pick one when you create it, or on the owner's entry): the dashboard
+  then lists it under that key result.
+- **The card's thread in chat.** When a card is created, the team's
+  assistant posts it in the team room; what happens to it afterwards (done,
+  blocked, comments, moves, reviews) lands in that thread, naming the
+  stakeholders so they are notified. Reply in the thread to talk to the
+  assistant about the card. *Open the card's thread in chat* on the card.
 
 You see your own departments' cards only (leadership sees all).
 
@@ -244,6 +255,7 @@ invitations made in the app are withdrawn again.
 ## What's new
 
 - **2026-10-26 (afternoon)**: the **Dashboard** is the Portal's landing page: your team's objectives, key results, KPIs with trends, open work and weekly reviews. Team owners define them there; everyone checks in values.
+- **2026-10-26 (evening)**: cards have **stakeholders** (owner, reviewers, watchers), can **serve a key result**, and get **a thread in the team room** where their events and your comments land.
 - **2026-10-26**: text you enter in the Portal is checked for hidden
   (invisible) characters, which can carry instructions for a bot that nobody
   sees; they are removed and the Portal tells you. Department digests now

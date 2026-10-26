@@ -62,3 +62,7 @@ def delete(object_id: str, actor: str, reason: str) -> StoreResult:
 
 def checkin(target_id: str, value: float, actor: str, reason: str, note: str = "") -> StoreResult:
     return _post("/okr/checkin", {"target_id": target_id, "value": value, "note": note, "actor": actor, "reason": reason})
+
+
+def link(rel: str, from_id: str, to_id: str, actor: str, reason: str) -> StoreResult:
+    return _post("/okr/links", {"rel": rel, "from_id": from_id, "to_id": to_id, "actor": actor, "reason": reason})

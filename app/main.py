@@ -456,7 +456,7 @@ def dashboard(tenant: str | None = Query(default=None), user: UserScope = Depend
     tasks = kanban_read.list_tasks(KANBAN_DB_PATH, tenants=[tenant])
     recent = int(__import__("time").time()) - RECENT_DAYS * 86400
     work = {
-        "awaiting_my_approval": [_brief(t) for t in tasks if t.get("status") == "review"] if user.can_approve_tenant(tenant) else [],
+        "awaiting_my_approval": [_brief(t) for t in tasks if t.get("status") == "review" and _may_review(user, t, _links(t["id"]))],
         "in_review": [_brief(t) for t in tasks if t.get("status") == "review"],
         "blocked": [_brief(t) for t in tasks if t.get("status") == "blocked"],
         "in_progress": [_brief(t) for t in tasks if t.get("status") == "running"],
@@ -470,6 +470,7 @@ def dashboard(tenant: str | None = Query(default=None), user: UserScope = Depend
         "kpis": team_read.kpis(TEAM_DB_PATH, tenant),
         "reviews": team_read.reviews(TEAM_DB_PATH, tenant),
         "work": work,
+        "serving": team_read.tasks_serving(TEAM_DB_PATH, tenant),
     }
     if user.can_rollup:
         tiles = []
@@ -560,6 +561,105 @@ def okr_checkin(body: CheckinRequest, user: UserScope = Depends(require_user)):
     return _store_result(team_write.checkin(body.target_id, body.value, actor=user.name, reason="check-in", note=body.note[:1000]))
 
 
+# --- stakeholders: who owns, reviews and follows a card (team store) ---
+
+STAKEHOLDER_ROLES = ("owner", "reviewer", "watcher")
+
+
+def _element_thread_url(thread: dict | None) -> str | None:
+    if not thread:
+        return None
+    return f"/#/room/{thread['room_id']}/{thread['event_id']}"   # appended to the Element origin by the page
+
+
+def _may_review(user: UserScope, task: dict, links: list[dict]) -> bool:
+    """Approval rights for the tenant, narrowed to the card's reviewers when
+    any are named."""
+    if not user.can_approve_tenant(task.get("tenant", "")):
+        return False
+    reviewers = [l for l in links if l.get("role") == "reviewer"]
+    if not reviewers:
+        return True
+    return any(l.get("matrix_id") == user.matrix_id or l.get("person") == user.name for l in reviewers)
+
+
+def _links(task_id: str) -> list[dict]:
+    return team_read.task_links(TEAM_DB_PATH, task_id) if team_read.available(TEAM_DB_PATH) else []
+
+
+class StakeholderRequest(BaseModel):
+    matrix_id: str
+    role: str
+    key_result: str | None = None       # the owner's link serves this key result
+
+
+def _member(user: UserScope, tenant: str, matrix_id: str) -> UserScope:
+    target = rbac.get(matrix_id)
+    if target is None or not target.can_read_tenant(tenant):
+        raise HTTPException(status_code=422, detail="Not a member of this team")
+    return target
+
+
+@app.get("/api/members")
+def members(tenant: str = Query(...), user: UserScope = Depends(require_user)):
+    """People of a team, for the stakeholder picker."""
+    if not user.can_read_tenant(tenant):
+        raise HTTPException(status_code=403, detail="Not in your scope")
+    rows = [{"name": u.name, "matrix_id": u.matrix_id, "can_approve": u.can_approve_tenant(tenant)}
+            for u in rbac.all() if u.matrix_id and u.can_read_tenant(tenant)]
+    rows.sort(key=lambda r: r["name"].lower())
+    return {"members": rows}
+
+
+@app.get("/api/okr/key-results")
+def key_result_options(tenant: str = Query(...), user: UserScope = Depends(require_user)):
+    if not user.can_read_tenant(tenant):
+        raise HTTPException(status_code=403, detail="Not in your scope")
+    if not team_read.available(TEAM_DB_PATH):
+        return {"key_results": []}
+    return {"key_results": team_read.key_results_of_tenant(TEAM_DB_PATH, tenant)}
+
+
+@app.post("/api/tasks/{task_id}/stakeholders")
+def add_stakeholder(task_id: str, body: StakeholderRequest, user: UserScope = Depends(require_user)):
+    task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
+    if task is None or not user.can_read_tenant(task.get("tenant", "")):
+        raise HTTPException(status_code=403, detail="Not in your scope")
+    if body.role not in STAKEHOLDER_ROLES:
+        raise HTTPException(status_code=422, detail="role must be owner, reviewer or watcher")
+    tenant = task.get("tenant", "")
+    target = _member(user, tenant, body.matrix_id)
+    if body.role == "reviewer" and not target.can_approve_tenant(tenant):
+        raise HTTPException(status_code=422, detail=f"{target.name} has no approval rights for {tenant}")
+    if body.role in ("owner", "reviewer") and not user.can_approve_tenant(tenant):
+        raise HTTPException(status_code=403, detail="Only people with approval rights name owners and reviewers")
+    if body.key_result and team_read.tenant_of(TEAM_DB_PATH, body.key_result) != tenant:
+        raise HTTPException(status_code=422, detail="That key result belongs to another team")
+    result = team_write.upsert("TaskLink", {"task_id": task_id, "person": target.name, "matrix_id": target.matrix_id, "role": body.role},
+                               actor=user.name, reason=f"stakeholder on {task_id}")
+    if not result.ok:
+        raise HTTPException(status_code=502, detail=result.error[:500])
+    if body.key_result:
+        linked = team_write.link("serves", result.object["id"], body.key_result, actor=user.name, reason=f"{task_id} serves a key result")
+        if not linked.ok:
+            raise HTTPException(status_code=502, detail=linked.error[:500])
+    return _store_result(result)
+
+
+@app.post("/api/tasks/{task_id}/stakeholders/{link_id}/delete")
+def remove_stakeholder(task_id: str, link_id: str, user: UserScope = Depends(require_user)):
+    task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
+    if task is None or not user.can_read_tenant(task.get("tenant", "")):
+        raise HTTPException(status_code=403, detail="Not in your scope")
+    link = next((l for l in _links(task_id) if l["id"] == link_id), None)
+    if link is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    own = link.get("matrix_id") == user.matrix_id
+    if not own and not user.can_approve_tenant(task.get("tenant", "")):
+        raise HTTPException(status_code=403, detail="Only people with approval rights remove others")
+    return _store_result(team_write.delete(link_id, actor=user.name, reason=f"stakeholder removed from {task_id}"))
+
+
 @app.get("/api/tasks/{task_id}")
 def task_detail(task_id: str, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
@@ -569,7 +669,11 @@ def task_detail(task_id: str, user: UserScope = Depends(require_user)):
         raise HTTPException(status_code=403, detail="Not in your scope")
     task["comments"] = kanban_read.list_comments(KANBAN_DB_PATH, task_id)
     task["attachments"] = kanban_read.list_attachments(KANBAN_DB_PATH, task_id)
-    task["can_review"] = user.can_approve_tenant(task.get("tenant", ""))
+    links = _links(task_id)
+    task["stakeholders"] = links
+    task["can_review"] = _may_review(user, task, links)
+    task["can_name_stakeholders"] = user.can_approve_tenant(task.get("tenant", ""))
+    task["thread_url"] = _element_thread_url(team_read.task_thread(TEAM_DB_PATH, task_id)) if team_read.available(TEAM_DB_PATH) else None
     task["sla_deadline"] = review_deadline(task) if task.get("status") == "review" else find_deadline(task)
     task["autonomy_level"] = config_loader.autonomy_level(task_skills(task))
     task["due_date"] = find_due_date(task)
@@ -718,6 +822,7 @@ def add_comment(task_id: str, body: CommentRequest, user: UserScope = Depends(re
 # --- kanban (write) ---
 
 class CreateTaskRequest(BaseModel):
+    key_result: str | None = None      # the new card serves this key result
     title: str
     tenant: str
     body: str = ""
@@ -737,11 +842,31 @@ def create_task(body: CreateTaskRequest, user: UserScope = Depends(require_user)
         raise HTTPException(status_code=403, detail="Review permission is required for this initial status")
     reject_reserved_markers(body.title, body.body)
     check_assignee(body.assignee)
+    if body.key_result and team_read.available(TEAM_DB_PATH) and team_read.tenant_of(TEAM_DB_PATH, body.key_result) != body.tenant:
+        raise HTTPException(status_code=422, detail="That key result belongs to another team")
     result = kanban_write.create_task(HERMES_BIN, body.title, body.tenant, body.body,
                                       body.assignee, body.status, body.priority)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
-    return ok_result(result)
+    out = ok_result(result)
+    task_id = _created_id(result.stdout)
+    if task_id and user.matrix_id and team_read.available(TEAM_DB_PATH):
+        # the creator owns the card; the owner's link is what serves a key result
+        link = team_write.upsert("TaskLink", {"task_id": task_id, "person": user.name, "matrix_id": user.matrix_id, "role": "owner"},
+                                 actor=user.name, reason=f"created {task_id}")
+        if link.ok and body.key_result:
+            team_write.link("serves", link.object["id"], body.key_result, actor=user.name, reason=f"{task_id} serves a key result")
+        out["task_id"] = task_id
+    return out
+
+
+def _created_id(stdout: str) -> str | None:
+    try:
+        data = json.loads(stdout)
+        return data.get("id") if isinstance(data, dict) else None
+    except ValueError:
+        m = re.search(r"\bt_[A-Za-z0-9_-]+", stdout or "")
+        return m.group(0) if m else None
 
 
 class EditTaskRequest(BaseModel):
@@ -831,7 +956,7 @@ def artifact_review_queue(user: UserScope = Depends(require_user)):
         deadline = review_deadline(t)
         t["sla_deadline"] = deadline
         t["sla_seconds_remaining"] = seconds_remaining(deadline) if deadline else None
-        t["can_review"] = user.can_approve_tenant(t.get("tenant", ""))
+        t["can_review"] = _may_review(user, t, _links(t["id"]))
         t["autonomy_level"] = config_loader.autonomy_level(task_skills(t))
         t["auto_approves"] = auto_approves(t)
     return {"tasks": tasks}
@@ -873,6 +998,8 @@ def review_artifact(body: ReviewDecisionRequest, user: UserScope = Depends(requi
     tenant = task.get("tenant", "")
     if not user.can_approve_tenant(tenant):
         raise HTTPException(status_code=403, detail="Not authorized to review this tenant's artifacts")
+    if not _may_review(user, task, _links(body.task_id)):
+        raise HTTPException(status_code=403, detail="This card names its reviewers; you are not one of them")
     if body.approve:
         result = kanban_write.approve_artifact(HERMES_BIN, body.task_id, body.note, author=user.name)
     else:

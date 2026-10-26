@@ -152,3 +152,58 @@ def tenant_of(db_path: Path, object_id: str) -> Optional[str]:
         return data.get("tenant")
     finally:
         conn.close()
+
+
+def task_links(db_path: Path, task_id: str) -> list[dict]:
+    """The card's stakeholders (TaskLink) with the key result each one's
+    link serves, if any."""
+    conn = _connect(db_path)
+    try:
+        out = []
+        for link in _objects(conn, "TaskLink"):
+            if link.get("task_id") != task_id:
+                continue
+            kr_ids = _children(conn, "serves", link["id"])
+            krs = _by_id(conn, kr_ids)
+            link["serves"] = [{"id": k["id"], "title": k.get("title")} for k in krs]
+            out.append(link)
+        order = {"owner": 0, "reviewer": 1, "watcher": 2}
+        out.sort(key=lambda l: (order.get(l.get("role"), 9), l.get("person", "")))
+        return out
+    finally:
+        conn.close()
+
+
+def task_thread(db_path: Path, task_id: str) -> Optional[dict]:
+    conn = _connect(db_path)
+    try:
+        for t in _objects(conn, "TaskThread"):
+            if t.get("task_id") == task_id:
+                return {"room_id": t.get("room_id"), "event_id": t.get("event_id")}
+        return None
+    finally:
+        conn.close()
+
+
+def key_results_of_tenant(db_path: Path, tenant: str) -> list[dict]:
+    """Active objectives' key results, for the "serves" picker."""
+    out = []
+    for o in objectives(db_path, tenant):
+        if o.get("status") == "closed":
+            continue
+        for kr in o.get("key_results", []):
+            out.append({"id": kr["id"], "title": kr.get("title"), "objective": o.get("title")})
+    return out
+
+
+def tasks_serving(db_path: Path, tenant: str) -> dict:
+    """key result id -> [task ids] for the dashboard."""
+    conn = _connect(db_path)
+    try:
+        by_kr: dict[str, list] = {}
+        for link in _objects(conn, "TaskLink"):
+            for kr in _children(conn, "serves", link["id"]):
+                by_kr.setdefault(kr, []).append(link["task_id"])
+        return by_kr
+    finally:
+        conn.close()

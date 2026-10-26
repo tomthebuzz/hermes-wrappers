@@ -91,9 +91,9 @@ def test_claim_only_from_ready(alice, calls):
 
 
 def test_artifact_queue_is_scoped_and_flags_review_rights(alice, rolly, mia):
-    assert [(t["id"], t["can_review"]) for t in alice.get("/api/artifacts").json()["tasks"]] == [("t_tech1", True)]
+    assert {t["id"]: t["can_review"] for t in alice.get("/api/artifacts").json()["tasks"]} == {"t_tech1": True, "t_tech3": False}
     rolly_view = {t["id"]: t["can_review"] for t in rolly.get("/api/artifacts").json()["tasks"]}
-    assert rolly_view == {"t_tech1": False, "t_ops1": False}
+    assert rolly_view == {"t_tech1": False, "t_ops1": False, "t_tech3": False}
     assert [t["id"] for t in mia.get("/api/artifacts").json()["tasks"]] == ["t_ops1"]
 
 

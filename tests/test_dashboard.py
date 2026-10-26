@@ -32,7 +32,7 @@ def test_rollup_tiles_for_leadership(rolly):
     tiles = {t["tenant"]: t for t in d["rollup"]}
     assert set(tiles) >= {"tech", "sales", "ops", "leadership"}
     assert tiles["tech"]["objectives"] == {"active": 1} and tiles["tech"]["key_results"] == {"at_risk": 1}
-    assert tiles["sales"]["kpis"] == {"crit": 1} and tiles["tech"]["board"]["review"] == 1
+    assert tiles["sales"]["kpis"] == {"crit": 1} and tiles["tech"]["board"]["review"] == 2
 
 
 def test_without_a_team_store(alice, monkeypatch):
