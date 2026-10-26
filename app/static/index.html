@@ -27,7 +27,7 @@ const esc=v=>String(v??'').replace(/[&<>\'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'
 // A JS string literal for an inline handler: the browser HTML-decodes the attribute
 // before running it, so esc() alone would let a quote break out of '...'.
 const jsArg=v=>esc(JSON.stringify(String(v??'')));
-async function api(path,opts={}){const r=await fetch(path,{credentials:'include',...opts});if(r.status===401){showLogin();throw Error('Not logged in')}const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.detail||`Request failed (${r.status})`);return j}
+async function api(path,opts={}){const r=await fetch(path,{credentials:'include',...opts});if(r.status===401){showLogin();throw Error('Not logged in')}const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.detail||`Request failed (${r.status})`);if(j&&j.notice)notify(j.notice,true);return j}
 function showLogin(){document.getElementById('login-screen').classList.remove('hidden');document.getElementById('app').classList.add('hidden')}
 async function requestLogin(){const status=document.getElementById('login-status');try{await api('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({login:document.getElementById('login-id').value.trim()})});status.textContent='Login link sent. Check your Matrix direct messages (or Telegram).';status.className='status'}catch(e){status.textContent=e.message;status.className='status red'}}
 async function logout(){await fetch('/logout',{method:'POST',credentials:'include'});showLogin()}

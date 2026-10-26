@@ -562,6 +562,15 @@ def check_assignee(assignee: str | None, allow_none: bool = False) -> None:
         raise HTTPException(status_code=422, detail=f"Unknown assignee {assignee!r}")
 
 
+def ok_result(result) -> dict:
+    """A success payload; `notice` is shown to the person by the page (e.g. the
+    bridge removed hidden characters from their text)."""
+    out = {"ok": True}
+    if getattr(result, "notice", ""):
+        out["notice"] = result.notice
+    return out
+
+
 @app.post("/api/tasks/{task_id}/comments")
 def add_comment(task_id: str, body: CommentRequest, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
@@ -571,7 +580,7 @@ def add_comment(task_id: str, body: CommentRequest, user: UserScope = Depends(re
     result = kanban_write.comment_task(HERMES_BIN, task_id, body.text, author=user.name)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
-    return {"ok": True}
+    return ok_result(result)
 
 
 # --- kanban (write) ---
@@ -600,7 +609,7 @@ def create_task(body: CreateTaskRequest, user: UserScope = Depends(require_user)
                                       body.assignee, body.status, body.priority)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
-    return {"ok": True}
+    return ok_result(result)
 
 
 class EditTaskRequest(BaseModel):
@@ -629,7 +638,7 @@ def edit_task(task_id: str, body: EditTaskRequest, user: UserScope = Depends(req
         result = kanban_write.assign_task(HERMES_BIN, task_id, body.assignee)
         if not result.ok:
             raise HTTPException(status_code=502, detail=result.stderr[:500])
-    return {"ok": True}
+    return ok_result(result)
 
 
 class TransitionTaskRequest(BaseModel):
@@ -672,7 +681,7 @@ def claim_task(task_id: str, user: UserScope = Depends(require_user)):
     result = kanban_write.claim_task(HERMES_BIN, task_id)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
-    return {"ok": True}
+    return ok_result(result)
 
 
 # --- artifacts (Phase 2) ---
@@ -739,4 +748,4 @@ def review_artifact(body: ReviewDecisionRequest, user: UserScope = Depends(requi
                                               author=user.name)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
-    return {"ok": True}
+    return ok_result(result)

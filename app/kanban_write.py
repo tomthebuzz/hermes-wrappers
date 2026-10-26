@@ -37,6 +37,7 @@ class CLIResult:
     ok: bool
     stdout: str
     stderr: str
+    notice: str = ""   # something the person should see even though the call succeeded
 
 
 def _bridge_call(method: str, path: str, json_body: Optional[dict] = None) -> CLIResult:
@@ -53,12 +54,17 @@ def _bridge_call(method: str, path: str, json_body: Optional[dict] = None) -> CL
         except (ValueError, AttributeError):
             detail = resp.text
         return CLIResult(ok=False, stdout="", stderr=str(detail))
+    notice = ""
     try:
         payload = resp.json()
         detail = payload.get("detail", resp.text) if isinstance(payload, dict) else resp.text
+        if isinstance(payload, dict) and payload.get("sanitized"):
+            # The bridge strips zero-width and other invisible characters
+            # (they can hide instructions for the agent) and says so.
+            notice = "Hidden (invisible) characters were removed from your text."
     except (ValueError, AttributeError):
         detail = resp.text
-    return CLIResult(ok=True, stdout=str(detail), stderr="")
+    return CLIResult(ok=True, stdout=str(detail), stderr="", notice=notice)
 
 
 def _run(hermes_bin: str, *args: str) -> CLIResult:

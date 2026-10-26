@@ -203,6 +203,10 @@ invitations made in the app are withdrawn again.
 
 ## What's new
 
+- **2026-10-26**: text you enter in the Portal is checked for hidden
+  (invisible) characters, which can carry instructions for a bot that nobody
+  sees; they are removed and the Portal tells you. Department digests now
+  end with the bot's spend over the last 7 days.
 - **2026-10-25 (evening)**: HR takes a ZIP of applications for one role at
   once.
 - **2026-10-25 (afternoon)**: the **HR** room with recruiting support (roles,
