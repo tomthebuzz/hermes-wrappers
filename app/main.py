@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
 
-from . import config_loader, kanban_read, kanban_write, people, team_read
+from . import config_loader, kanban_read, kanban_write, people, team_read, team_write
 from .auth.magic_link import MagicLinkAuth, MatrixDM
 from .auth.matrix_password import PasswordChanger
 from .artifacts.sla import (SLA_DEADLINE_RE, deadline_after, find_deadline, find_due_date, is_overdue,
@@ -483,6 +483,81 @@ def dashboard(tenant: str | None = Query(default=None), user: UserScope = Depend
             tiles.append(tile)
         out["rollup"] = tiles
     return out
+
+
+# --- dashboard (write: through the bridge) ---
+
+OKR_TYPES = {"Objective", "KeyResult", "KPI"}
+
+
+class OkrObjectRequest(BaseModel):
+    type: str
+    id: str | None = None
+    objective_id: str | None = None      # a new KeyResult's objective
+    data: dict
+    reason: str = "dashboard"
+
+
+class CheckinRequest(BaseModel):
+    target_id: str
+    value: float
+    note: str = ""
+
+
+def _store_result(result) -> dict:
+    if not result.ok:
+        raise HTTPException(status_code=502, detail=result.error[:500])
+    out = {"ok": True, "object": result.object}
+    if result.notice:
+        out["notice"] = result.notice
+    return out
+
+
+def _okr_tenant(body: OkrObjectRequest) -> str | None:
+    if body.id:
+        return team_read.tenant_of(TEAM_DB_PATH, body.id)
+    if body.type == "KeyResult":
+        return team_read.tenant_of(TEAM_DB_PATH, body.objective_id) if body.objective_id else None
+    return body.data.get("tenant")
+
+
+def require_team_owner(user: UserScope, tenant: str | None) -> None:
+    """Definitions are the team owner's: for now the people with approval
+    rights for the tenant (team.yaml can_approve_artifacts)."""
+    if not tenant or not user.can_approve_tenant(tenant):
+        raise HTTPException(status_code=403, detail="Only the team's owners define objectives and KPIs")
+
+
+@app.post("/api/okr/objects")
+def okr_upsert(body: OkrObjectRequest, user: UserScope = Depends(require_user)):
+    if body.type not in OKR_TYPES:
+        raise HTTPException(status_code=422, detail="type must be Objective, KeyResult or KPI")
+    if body.type == "KeyResult" and not body.id and not body.objective_id:
+        raise HTTPException(status_code=422, detail="a new key result needs objective_id")
+    reject_reserved_markers(*[v for v in body.data.values() if isinstance(v, str)])
+    tenant = _okr_tenant(body)
+    require_team_owner(user, tenant)
+    if "tenant" in body.data and body.data["tenant"] != tenant:
+        raise HTTPException(status_code=403, detail="an object cannot move to another team")
+    result = team_write.upsert(body.type, body.data, actor=user.name, reason=body.reason[:200] or "dashboard",
+                               object_id=body.id, objective_id=None if body.id else body.objective_id)
+    return _store_result(result)
+
+
+@app.post("/api/okr/objects/{object_id}/delete")
+def okr_delete(object_id: str, user: UserScope = Depends(require_user)):
+    require_team_owner(user, team_read.tenant_of(TEAM_DB_PATH, object_id))
+    return _store_result(team_write.delete(object_id, actor=user.name, reason="deleted from the dashboard"))
+
+
+@app.post("/api/okr/checkin")
+def okr_checkin(body: CheckinRequest, user: UserScope = Depends(require_user)):
+    """Any member of the team records a value; the store keeps who and when."""
+    reject_reserved_markers(body.note)
+    tenant = team_read.tenant_of(TEAM_DB_PATH, body.target_id)
+    if not tenant or not user.can_read_tenant(tenant):
+        raise HTTPException(status_code=403, detail="Not in your scope")
+    return _store_result(team_write.checkin(body.target_id, body.value, actor=user.name, reason="check-in", note=body.note[:1000]))
 
 
 @app.get("/api/tasks/{task_id}")

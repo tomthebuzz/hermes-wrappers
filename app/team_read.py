@@ -132,3 +132,23 @@ def tenant_summary(db_path: Path, tenant: str) -> dict:
         return {"objectives": obj_status, "key_results": kr_status, "kpis": kpi_status}
     finally:
         conn.close()
+
+
+def tenant_of(db_path: Path, object_id: str) -> Optional[str]:
+    """The tenant an object belongs to: its own `tenant` (Objective, KPI,
+    Source) or, for a KeyResult, its objective's. None when unknown."""
+    conn = _connect(db_path)
+    try:
+        row = conn.execute("SELECT type, data FROM objects WHERE id = ?", (object_id,)).fetchone()
+        if row is None:
+            return None
+        data = json.loads(row["data"])
+        if row["type"] == "KeyResult":
+            parent = conn.execute("SELECT from_id FROM links WHERE rel = 'key_results' AND to_id = ?", (object_id,)).fetchone()
+            if parent is None:
+                return None
+            prow = conn.execute("SELECT data FROM objects WHERE id = ?", (parent["from_id"],)).fetchone()
+            return json.loads(prow["data"]).get("tenant") if prow else None
+        return data.get("tenant")
+    finally:
+        conn.close()

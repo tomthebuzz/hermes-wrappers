@@ -157,8 +157,26 @@ you belong to several; leadership sees a tile per team first.
   week. Click one to open it.
 - **Weekly reviews**: the team assistant's approved review of the week.
 
-Defining objectives and KPIs and checking in values comes in the next
-update; until then the team owner records them with the assistant in chat.
+**Checking in.** Every team member can record the current value of a key
+result or KPI: *check in* next to it, enter the number and, if you like,
+what moved it. It is stored under your name with the date; the status
+follows within the hour.
+
+**Defining (team owners, i.e. people with approval rights for the team).**
+*New objective* and *New KPI* at the top, *add key result* and *edit* on
+each item. Keep key results measurable: a number with a start, a target and
+a direction. **Measured by** decides who fills the value:
+
+| Measured by | Who | `Metric` |
+|---|---|---|
+| manual | people, through check-ins | – |
+| board | the Kanban board, automatically | `board.throughput window=7d`, `board.created`, `board.open`, `board.blocked`, `board.in_review`, `board.failures`, `board.cycle_time_p50_h`, `board.review_turnaround_p50_h` |
+| records | the team's records (HR for now), automatically, counts only | `hr.open_roles`, `hr.candidates`, `hr.applications stage=interviewed`, `hr.hired window=30d`, `hr.time_to_hire_p50_d` |
+| agent | the team assistant from a registered source (coming) | – |
+
+*Delete* removes an objective with its key results and their history; the
+records keep who deleted what and when. You can also ask the team assistant
+in chat ("how are we doing on the objectives?", "check in: leads = 42").
 
 ### The board
 
@@ -225,7 +243,7 @@ invitations made in the app are withdrawn again.
 
 ## What's new
 
-- **2026-10-26 (afternoon)**: the **Dashboard** is the Portal's landing page: your team's objectives, key results, KPIs with trends, open work and weekly reviews.
+- **2026-10-26 (afternoon)**: the **Dashboard** is the Portal's landing page: your team's objectives, key results, KPIs with trends, open work and weekly reviews. Team owners define them there; everyone checks in values.
 - **2026-10-26**: text you enter in the Portal is checked for hidden
   (invisible) characters, which can carry instructions for a bot that nobody
   sees; they are removed and the Portal tells you. Department digests now
