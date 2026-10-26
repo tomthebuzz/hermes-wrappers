@@ -155,7 +155,12 @@ you belong to several; leadership sees a tile per team first.
   every morning at 06:00.
 - **Work**: cards awaiting your approval, blocked, in progress and done this
   week. Click one to open it.
-- **Weekly reviews**: the team assistant's approved review of the week.
+- **Weekly reviews**: every Monday the team assistant writes a review of
+  the week (objectives, KPIs not on target, the board, three things that
+  need attention) as a card in Review. Someone with approval rights reads
+  it in the Portal and approves it (or asks for changes); approved reviews
+  appear here. On Fridays the assistant reminds the room of key results
+  without a check-in that week.
 
 **Checking in.** Every team member can record the current value of a key
 result or KPI: *check in* next to it, enter the number and, if you like,
@@ -255,7 +260,7 @@ invitations made in the app are withdrawn again.
 ## What's new
 
 - **2026-10-26 (afternoon)**: the **Dashboard** is the Portal's landing page: your team's objectives, key results, KPIs with trends, open work and weekly reviews. Team owners define them there; everyone checks in values.
-- **2026-10-26 (evening)**: cards have **stakeholders** (owner, reviewers, watchers), can **serve a key result**, and get **a thread in the team room** where their events and your comments land.
+- **2026-10-26 (evening)**: the assistant writes a **weekly review** every Monday for approval, and reminds the room of missing check-ins on Fridays; cards have **stakeholders** (owner, reviewers, watchers), can **serve a key result**, and get **a thread in the team room** where their events and your comments land.
 - **2026-10-26**: text you enter in the Portal is checked for hidden
   (invisible) characters, which can carry instructions for a bot that nobody
   sees; they are removed and the Portal tells you. Department digests now
