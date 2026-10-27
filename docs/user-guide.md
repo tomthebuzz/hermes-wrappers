@@ -179,8 +179,13 @@ Good to know:
   deleted: someone who objected stays protected.
 - The dashboard's **Funnel** tile counts deals per stage, conversion and
   drop-off per step and declines by reason, from these records, every hour.
-- Enrichment of company data and nurture campaigns are coming next;
-  until then the assistant records what you tell it.
+- **Company facts** (industry, size, website, city) are filled in by an
+  hourly enrichment run; ask "what do we know about X?" The assistant
+  tells you where a fact came from.
+- **Nurture**: won deals (and declined ones whose reason allows it) put
+  the contact in the nurture campaign. On Fridays a card per due step
+  appears for the assistant; its draft lands under **Artifacts** for your
+  approval, and you send it. "Take X out of nurture" stops it.
 
 ## Team Portal
 
