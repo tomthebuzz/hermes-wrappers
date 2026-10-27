@@ -453,7 +453,7 @@ def change_password(body: PasswordChangeRequest, user: UserScope = Depends(requi
 
 USER_GUIDE = Path(__file__).resolve().parents[1] / "docs" / "user-guide.md"
 HELP_PAGE = """<!doctype html><html lang="{lang}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Help · Team Portal</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{help_title} · Team Portal</title>
 <style>:root{{--bg:#0f1115;--panel:#171a21;--line:#303643;--text:#e7eaf0;--muted:#aab2c0}}
 body{{font:15px/1.55 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--text)}}
 header{{position:sticky;top:0;background:var(--panel);padding:14px 20px;border-bottom:1px solid var(--line)}}
@@ -486,7 +486,8 @@ def help_page(request: Request):
                              extensions=["tables", "toc", "fenced_code"])
     switch = " · ".join(f"<b>{name}</b>" if code == lang else f'<a href="/help?lang={code}">{name}</a>'
                         for code, name in LANGUAGE_NAMES.items() if code in i18n.SUPPORTED)
-    response = HTMLResponse(HELP_PAGE.format(body=body, lang=lang, switch=switch), headers={"Cache-Control": "no-store"})
+    response = HTMLResponse(HELP_PAGE.format(body=body, lang=lang, switch=switch, help_title=t("nav.help")),
+                            headers={"Cache-Control": "no-store"})
     if request.query_params.get("lang"):   # an explicit choice is kept, like the Portal's switcher
         response.set_cookie(i18n.COOKIE, lang, max_age=i18n.COOKIE_MAX_AGE, samesite="lax",
                             secure=PORTAL_BASE_URL.startswith("https://"))
