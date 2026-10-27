@@ -190,6 +190,9 @@ def login_verify(token: str, request: Request):
     # forwarded link cannot silently sign you in as someone else.
     scope = rbac.get(pending.user_key)
     name = html.escape(scope.name if scope else "unknown")
+    # No session yet: the pending person's own language, unless the browser chose one.
+    if scope and scope.language and not request.query_params.get("lang") and not request.cookies.get(i18n.COOKIE):
+        i18n.use(scope.language)
     return HTMLResponse(f"""<!doctype html><html lang="{i18n.current()}"><meta charset="utf-8"><title>{t("verify.title")}</title>
 <body style="font:15px system-ui;margin:3rem auto;max-width:28rem">
 <h2>{t("verify.heading")}</h2><p>{t("verify.text", name=f"<b>{name}</b>")}</p>
