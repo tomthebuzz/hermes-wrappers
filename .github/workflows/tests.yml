@@ -1,7 +1,7 @@
 name: tests
 on:
   push:
-    branches: [main, dev, team-dashboards]
+    branches: [main, dev, team-dashboards, sales]
   pull_request:
 jobs:
   pytest:
