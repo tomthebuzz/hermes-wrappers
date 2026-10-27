@@ -137,6 +137,51 @@ Good to know:
 - Onboarding and offboarding checklists exist as **drafts**: ask for them,
   but they do not keep records yet.
 
+## Sales: the funnel with the assistant
+
+In the **Sales** room the assistant keeps the sales records: companies,
+contacts, deals and every touchpoint. It drafts messages; **you send
+them**. It never contacts anyone itself and never looks people up on its
+own.
+
+The funnel is set per company: **small** (prospect → offer → client or
+declined) or **extended** (lead → prospect → needs → offer → client or
+declined). An offer can go back one step for another round; a declined
+deal can be reopened.
+
+| You say | What happens |
+|---|---|
+| "New lead from LinkedIn: Petra Muster, Head of Operations at Musterbau AG …" | Records company, contact and deal at the first stage. Asks how we may contact them when it is not clear (see *contact basis* below) |
+| "I know her personally, met her at the fair" | Records a *personal contact* basis with your name: every channel is allowed |
+| "Five leads from my Sales Navigator list:" + one per line | Records them all and shows a table; anyone on the do-not-contact list or already recorded is skipped |
+| "Draft a LinkedIn note / Instagram DM / WhatsApp / e-mail for Petra" | A draft in her language, from what the records know. You send it, then say "sent" |
+| "She replied: …" | Logs the reply with its sentiment and objection, suggests the next stage |
+| "Musterbau is a prospect now", "they need …", "offer sent, CHF 24k" | Moves the deal along and records the facts of that stage |
+| "They signed" | Marks the deal won and enrols the contact in the client nurture campaign |
+| "They declined: too expensive" | Records the decline with a reason from your company's list; depending on the reason the contact is kept in nurture, dropped, or you are asked |
+| "They don't want any contact from us" | Declines the deal and puts the contact's identifiers on the **do-not-contact list**, for good |
+| "Where are we with Musterbau?", "what's in the funnel?", "what's stuck?" | Status of one deal, or counts per stage, overdue next steps and recent declines by reason |
+
+**Contact basis**: every contact records how we may reach them.
+*Platform* (found on LinkedIn or Instagram) allows messages inside that
+platform only; *inbound* (they wrote to us), *consent*, an *existing
+relationship* or a *personal contact* allow e-mail and WhatsApp too. The
+assistant refuses a cold e-mail or WhatsApp message otherwise: unsolicited
+messages to people in Germany and Switzerland are restricted by law.
+
+Good to know:
+
+- Business data only: role, company, work e-mail, business phone, LinkedIn
+  and Instagram handles. Nothing private about the person.
+- Contacts, deals and touchpoints are **deleted automatically one year**
+  after the last activity (your company may set another period).
+- The **do-not-contact list** is never cleared, not even when a contact is
+  deleted: someone who objected stays protected.
+- The dashboard's **Funnel** tile counts deals per stage, conversion and
+  drop-off per step and declines by reason, from these records, every hour.
+- Enrichment of company data and nurture campaigns are coming next;
+  until then the assistant records what you tell it.
+
 ## Team Portal
 
 ### Dashboard (your landing page)
@@ -285,6 +330,7 @@ invitations made in the app are withdrawn again.
 
 ## What's new
 
+- **2026-10-27**: **Sales** records in the Sales room (leads, contacts, deals, touchpoints), drafts for LinkedIn, Instagram, WhatsApp and e-mail that you send, a configurable funnel and decline reasons, a permanent do-not-contact list, and a **Funnel** tile on the sales team's dashboard.
 - **2026-10-26 (afternoon)**: the **Dashboard** is the Portal's landing page: your team's objectives, key results, KPIs with trends, open work and weekly reviews. Team owners define them there; everyone checks in values.
 - **2026-10-26 (late)**: Portal login takes your plain user name (`@name`); the full Matrix ID is no longer needed.
 - **2026-10-26 (night)**: **swimlanes** per team on the board (owners define them on the dashboard, linked to an objective and a KPI), **move** objectives and KPIs to another team, **All artifacts** list with filters, and board filters that take **several values** as chips.
