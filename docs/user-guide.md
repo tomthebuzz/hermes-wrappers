@@ -187,6 +187,26 @@ Good to know:
   appears for the assistant; its draft lands under **Artifacts** for your
   approval, and you send it. "Take X out of nurture" stops it.
 
+## Reading a website into the records
+
+Every assistant can read a website for its team. Post the address in the
+team's room and say what you want from it:
+
+| In | You say | The assistant proposes |
+|---|---|---|
+| #sales | "Read https://example.ch and take our offers and ideal customers" | Offers (name, tier, what is included, public price) and ideal customer profiles (industry, size, countries, buyer role, pain, trigger) |
+| #hr | "Add the open positions from https://example.ch/careers" | One position per opening with its criteria |
+| any other room | "What does this company do?" | A summary as a draft under **Artifacts** |
+
+It reads the page and a few linked pages on the same site, never logs
+in, and never takes people's names or contact details from a site. You
+get a **numbered proposal**; reply with the numbers to keep ("all", "1
+and 3"), with edits ("2: price 490 per month", "drop 4"). **Nothing is
+saved until you confirm.** Confirmed items land as drafts (offers,
+customer segments, roles) that the team owner activates. If a site is not
+reachable for the assistant (an internal address), paste the page text
+instead and name the address.
+
 ## Team Portal
 
 ### Dashboard (your landing page)
@@ -335,6 +355,7 @@ invitations made in the app are withdrawn again.
 
 ## What's new
 
+- **2026-10-27 (afternoon)**: every assistant can **read a website** for its team: post the address, get a numbered proposal (offers and ideal customers for sales, open positions for HR), confirm or edit, and only then is anything saved.
 - **2026-10-27**: **Sales** records in the Sales room (leads, contacts, deals, touchpoints), drafts for LinkedIn, Instagram, WhatsApp and e-mail that you send, a configurable funnel and decline reasons, a permanent do-not-contact list, and a **Funnel** tile on the sales team's dashboard.
 - **2026-10-26 (afternoon)**: the **Dashboard** is the Portal's landing page: your team's objectives, key results, KPIs with trends, open work and weekly reviews. Team owners define them there; everyone checks in values.
 - **2026-10-26 (late)**: Portal login takes your plain user name (`@name`); the full Matrix ID is no longer needed.
