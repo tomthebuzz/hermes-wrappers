@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from ..i18n import t
 from ..rbac import UserScope
 
 TOKEN_TTL_SECONDS = 600  # 10 minutes
@@ -123,10 +124,10 @@ class MagicLinkAuth:
             nonce=nonce,
         )
         link = f"{self._portal_base_url}/login/verify?token={token}"
-        message = (
-            "Team Portal login link (expires in "
-            f"{TOKEN_TTL_SECONDS // 60} minutes):\n{link}"
-        )
+        # In the person's own language (users.yaml), not the requester's browser:
+        # the DM reaches their phone, and a login asked for by someone else
+        # must not change what they see.
+        message = t("login.dm", lang=getattr(user, "language", None), minutes=TOKEN_TTL_SECONDS // 60, link=link)
         if self._matrix and user.matrix_id:
             try:
                 self._matrix.send(user.matrix_id, message)

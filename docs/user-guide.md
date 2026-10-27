@@ -38,6 +38,12 @@ must be switched on).
 6. **Change your password** in the Portal: **Profile › Change password**
    (the mobile apps cannot do it). Your signed-in apps stay signed in.
 
+**Language.** The Portal and this guide appear in your browser's language
+(English or German); the switch at the top right pins one. **Profile ›
+Language** sets the language of your login links and reminders. The
+assistants answer in the language you write in. The Element app follows
+your device's language.
+
 ## Matrix: working with your assistant
 
 Open your department's room (for example **Tech**) and write normally:
@@ -91,8 +97,9 @@ Type these as a message on their own. Your account may run:
 | `/status` | Shows the conversation's state (model, how full the context is) |
 | `/compress` | Shortens a long conversation so the assistant stays sharp |
 
-Other commands (changing the model, restarting, updates) are for the
-operators; the assistant says so if you try one.
+The commands themselves stay English. Other commands (changing the model,
+restarting, updates) are for the operators; the assistant says so if you
+try one.
 
 ### Tips
 
@@ -323,18 +330,19 @@ changes there.
 
 ### Profile
 
-Your name, Matrix ID, departments and where you may approve; **Change
-password** for your Matrix password; **Log out**.
+Your name, Matrix ID, departments and where you may approve; **Language**;
+**Change password** for your Matrix password; **Log out**.
 
 ### People (owners only)
 
 If you manage your team's access, **People** lists everyone on your server.
 
-- **Add person**: name, user name (becomes `@name:{{HOST}}`), and per
-  department whether they are a member and whether they may approve. The
+- **Add person**: name, user name (becomes `@name:{{HOST}}`), language,
+  and per department whether they are a member and whether they may
+  approve. The
   Portal shows the sign-in details once, with **Copy** buttons and **Copy
   all**; hand them over in person or by phone, not by e-mail.
-- **Change**: tick or untick departments. New rooms are offered at once;
+- **Change**: tick or untick departments, set the language. New rooms are offered at once;
   rooms they no longer belong to are left for them.
 - **Remove person**: takes away every room and the Portal; the account is
   closed for good.
@@ -355,6 +363,7 @@ invitations made in the app are withdrawn again.
 
 ## What's new
 
+- **2026-10-27 (evening)**: the Portal, its login messages and this guide in **German**: the language follows your browser, the switch at the top right pins it, and Profile sets it for login links and reminders. The assistants answer in the language you write in.
 - **2026-10-27 (afternoon)**: every assistant can **read a website** for its team: post the address, get a numbered proposal (offers and ideal customers for sales, open positions for HR), confirm or edit, and only then is anything saved.
 - **2026-10-27**: **Sales** records in the Sales room (leads, contacts, deals, touchpoints), drafts for LinkedIn, Instagram, WhatsApp and e-mail that you send, a configurable funnel and decline reasons, a permanent do-not-contact list, and a **Funnel** tile on the sales team's dashboard.
 - **2026-10-26 (afternoon)**: the **Dashboard** is the Portal's landing page: your team's objectives, key results, KPIs with trends, open work and weekly reviews. Team owners define them there; everyone checks in values.

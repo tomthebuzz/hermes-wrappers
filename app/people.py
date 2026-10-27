@@ -40,12 +40,23 @@ def _call(method: str, path: str, body: dict | None = None) -> Result:
     return Result(True, payload if isinstance(payload, dict) else {})
 
 
-def add(localpart: str, name: str, tenants: list[str], approve: list[str]) -> Result:
-    return _call("POST", "", {"localpart": localpart, "name": name, "tenants": tenants, "approve": approve})
+def add(localpart: str, name: str, tenants: list[str], approve: list[str], language: str | None = None) -> Result:
+    body = {"localpart": localpart, "name": name, "tenants": tenants, "approve": approve}
+    if language:
+        body["language"] = language
+    return _call("POST", "", body)
 
 
-def update(localpart: str, tenants: list[str], approve: list[str]) -> Result:
-    return _call("PUT", f"/{localpart}", {"tenants": tenants, "approve": approve})
+def update(localpart: str, tenants: list[str], approve: list[str], language: str | None = None) -> Result:
+    body = {"tenants": tenants, "approve": approve}
+    if language:
+        body["language"] = language
+    return _call("PUT", f"/{localpart}", body)
+
+
+def set_language(localpart: str, language: str | None) -> Result:
+    """Only the person's language in team.yaml / users.yaml; no rooms, no bot restart."""
+    return _call("PUT", f"/{localpart}/language", {"language": language or ""})
 
 
 def remove(localpart: str) -> Result:

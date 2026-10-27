@@ -58,6 +58,7 @@ class UserScope:
     telegram_chat_id: str | None = None
     matrix_id: str | None = None
     can_manage_people: bool = False
+    language: str | None = None          # "en" / "de" from users.yaml; None = browser decides
 
     @property
     def key(self) -> str:
@@ -136,6 +137,7 @@ class RBAC:
                 can_rollup=bool(entry.get("can_rollup", False)),
                 can_approve_artifacts=tuple(entry.get("can_approve_artifacts", [])),
                 can_manage_people=bool(entry.get("can_manage_people", False)),
+                language=str(entry["language"]).lower() if entry.get("language") else None,
             )
             by_key[scope.key] = scope
             if username:

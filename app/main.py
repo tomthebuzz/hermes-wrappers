@@ -28,8 +28,9 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
 
-from . import config_loader, kanban_read, kanban_write, people, team_read, team_write
+from . import config_loader, i18n, kanban_read, kanban_write, people, team_read, team_write
 from .auth.magic_link import MagicLinkAuth, MatrixDM
+from .i18n import t
 from .auth.matrix_password import PasswordChanger
 from .artifacts.sla import (SLA_DEADLINE_RE, deadline_after, find_deadline, find_due_date, is_overdue,
                             make_deadline_marker, parse_ts, seconds_remaining)
@@ -89,16 +90,46 @@ SESSION_MAX_AGE = 60 * 60 * 12  # 12h
 def require_user(request: Request) -> UserScope:
     raw = request.cookies.get(SESSION_COOKIE)
     if not raw:
-        raise HTTPException(status_code=401, detail="Not logged in")
+        raise HTTPException(status_code=401, detail=t("err.not_logged_in"))
     try:
         user_key = signer.loads(raw, max_age=SESSION_MAX_AGE)
     except BadSignature:
-        raise HTTPException(status_code=401, detail="Invalid or expired session")
+        raise HTTPException(status_code=401, detail=t("err.session_expired"))
     scope = rbac.get(user_key)
     if scope is None:
         # Fail closed: a valid session for an unknown/removed user gets nothing.
-        raise HTTPException(status_code=403, detail="No access configured for this user")
+        raise HTTPException(status_code=403, detail=t("err.no_access"))
     return scope
+
+
+def _session_language(raw_cookie: str | None) -> str | None:
+    """The signed-in person's users.yaml language, if the session cookie is valid."""
+    if not raw_cookie:
+        return None
+    try:
+        scope = rbac.get(signer.loads(raw_cookie, max_age=SESSION_MAX_AGE))
+    except BadSignature:
+        return None
+    return scope.language if scope else None
+
+
+class LanguageMiddleware:
+    """Chooses the request's language before anything else runs (see i18n.py).
+    Pure ASGI and set on the request's own task: route handlers and
+    dependencies run in thread-pool copies of this context, so a value set
+    inside one of them would not reach the others."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            from starlette.requests import Request as _Request
+            req = _Request(scope)
+            i18n.use(i18n.pick(query=req.query_params.get("lang"), cookie=req.cookies.get(i18n.COOKIE),
+                               user_lang=_session_language(req.cookies.get(SESSION_COOKIE)),
+                               accept=req.headers.get("accept-language")))
+        await self.app(scope, receive, send)
 
 
 @app.get("/healthz")
@@ -107,6 +138,7 @@ def healthz():
 
 
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+app.add_middleware(LanguageMiddleware)
 
 
 # --- auth ---
@@ -129,7 +161,7 @@ def login(body: LoginRequest, request: Request):
         result = magic_link.issue(scope, nonce=nonce)
         if not result.delivered:
             logger.warning("login link for a provisioned user not delivered: %s", result.error[:200])
-    response = JSONResponse({"status": "sent", "note": "If this account exists, a login link is on its way (Matrix or Telegram)."})
+    response = JSONResponse({"status": "sent", "note": t("login.note")})
     response.set_cookie(LOGIN_NONCE_COOKIE, nonce, max_age=900, httponly=True, samesite="lax",
                         secure=PORTAL_BASE_URL.startswith("https://"))
     return response
@@ -150,7 +182,7 @@ def _start_session(user_key: str) -> RedirectResponse:
 def login_verify(token: str, request: Request):
     pending = magic_link.peek(token)
     if pending is None:
-        raise HTTPException(status_code=400, detail="Invalid or expired token")
+        raise HTTPException(status_code=400, detail=t("err.token_invalid"))
     if pending.nonce and secrets.compare_digest(pending.nonce, request.cookies.get(LOGIN_NONCE_COOKIE, "")):
         return _start_session(magic_link.verify(token))
     # Opened in a browser that did not ask for this link (another device, or a
@@ -158,19 +190,18 @@ def login_verify(token: str, request: Request):
     # forwarded link cannot silently sign you in as someone else.
     scope = rbac.get(pending.user_key)
     name = html.escape(scope.name if scope else "unknown")
-    return HTMLResponse(f"""<!doctype html><meta charset="utf-8"><title>Team Portal sign-in</title>
+    return HTMLResponse(f"""<!doctype html><html lang="{i18n.current()}"><meta charset="utf-8"><title>{t("verify.title")}</title>
 <body style="font:15px system-ui;margin:3rem auto;max-width:28rem">
-<h2>Sign in to the Team Portal</h2><p>This link signs you in as <b>{name}</b>.
-Only continue if that is you and you asked for this link.</p>
+<h2>{t("verify.heading")}</h2><p>{t("verify.text", name=f"<b>{name}</b>")}</p>
 <form method="post" action="/login/verify"><input type="hidden" name="token" value="{html.escape(token)}">
-<button type="submit">Continue as {name}</button></form></body>""", headers={"Cache-Control": "no-store"})
+<button type="submit">{t("verify.button", name=name)}</button></form></body></html>""", headers={"Cache-Control": "no-store"})
 
 
 @app.post("/login/verify")
 def login_verify_confirm(token: str = Form(...)):
     user_key = magic_link.verify(token)
     if user_key is None:
-        raise HTTPException(status_code=400, detail="Invalid or expired token")
+        raise HTTPException(status_code=400, detail=t("err.token_invalid"))
     return _start_session(user_key)
 
 
@@ -194,6 +225,8 @@ def profile(user: UserScope = Depends(require_user)):
         "can_rollup": user.can_rollup,
         "can_approve_artifacts": list(user.can_approve_artifacts),
         "can_manage_people": user.can_manage_people,
+        "language": user.language,          # from users.yaml (the owner or the person set it); None = not set
+        "languages": list(i18n.SUPPORTED),
     }
 
 
@@ -204,20 +237,20 @@ class ProfileUpdateRequest(BaseModel):
 @app.patch("/api/profile")
 def update_profile(body: ProfileUpdateRequest, user: UserScope = Depends(require_user)):
     if user.telegram_user_id is None:
-        raise HTTPException(status_code=409, detail="This account signs in with Matrix; it has no Telegram username")
+        raise HTTPException(status_code=409, detail=t("err.no_telegram_username"))
     username = body.telegram_username.strip().removeprefix("@").lower()
     if not username or len(username) > 32 or not username.replace("_", "").isalnum():
-        raise HTTPException(status_code=422, detail="Enter a valid Telegram username without @")
+        raise HTTPException(status_code=422, detail=t("err.telegram_username_invalid"))
     try:
         data = yaml.safe_load(USERS_YAML_PATH.read_text()) or {}
         entries = data.get("users", [])
         target = next((e for e in entries if str(e.get("telegram_user_id")) == str(user.telegram_user_id)), None)
         if target is None:
-            raise HTTPException(status_code=409, detail="User entry is no longer configured")
+            raise HTTPException(status_code=409, detail=t("err.user_entry_gone"))
         for entry in entries:
             existing = str(entry.get("telegram_username", "")).strip().removeprefix("@").lower()
             if existing == username and str(entry.get("telegram_user_id")) != str(user.telegram_user_id):
-                raise HTTPException(status_code=409, detail="That Telegram username is already assigned")
+                raise HTTPException(status_code=409, detail=t("err.telegram_username_taken"))
         target["telegram_username"] = username
         # users.yaml is mounted as a single writable Docker file. Replace its
         # contents in-place (os.replace would replace the container mountpoint,
@@ -225,7 +258,7 @@ def update_profile(body: ProfileUpdateRequest, user: UserScope = Depends(require
         USERS_YAML_PATH.write_text(yaml.safe_dump(data, sort_keys=False))
         rbac.reload()
     except OSError as e:
-        raise HTTPException(status_code=500, detail=f"Could not save profile; check users.yaml mount permissions: {e}")
+        raise HTTPException(status_code=500, detail=t("err.profile_save", error=str(e)))
     return {"ok": True, "telegram_username": username}
 
 
@@ -247,7 +280,7 @@ people_log = logging.getLogger("team_portal.people")
 
 def require_people_manager(user: UserScope = Depends(require_user)) -> UserScope:
     if not user.can_manage_people or not user.matrix_id:
-        raise HTTPException(status_code=403, detail="Managing people is not part of your role")
+        raise HTTPException(status_code=403, detail=t("err.people_role"))
     return user
 
 
@@ -263,26 +296,26 @@ def _grantable(user: UserScope) -> list[str]:
 def _check_grant(user: UserScope, tenants: list[str], approve: list[str]) -> None:
     grantable = set(_grantable(user))
     if not tenants:
-        raise HTTPException(status_code=422, detail="Pick at least one tenant")
+        raise HTTPException(status_code=422, detail=t("err.pick_tenant"))
     if set(tenants) - grantable:
-        raise HTTPException(status_code=403, detail="You can only give tenants you can read")
+        raise HTTPException(status_code=403, detail=t("err.grant_tenants"))
     if set(approve) - set(tenants):
-        raise HTTPException(status_code=422, detail="Approval only for tenants the person can read")
+        raise HTTPException(status_code=422, detail=t("err.approve_subset"))
     if set(approve) - set(user.can_approve_artifacts):
-        raise HTTPException(status_code=403, detail="You can only give approval where you may approve")
+        raise HTTPException(status_code=403, detail=t("err.grant_approval"))
 
 
 def _target(user: UserScope, localpart: str) -> UserScope:
     if not LOCALPART_RE.fullmatch(localpart):
-        raise HTTPException(status_code=422, detail="Invalid user name")
+        raise HTTPException(status_code=422, detail=t("err.username_invalid"))
     mxid = f"@{localpart}:{_server(user)}"
     target = next((u for u in rbac.all() if u.matrix_id == mxid), None)
     if target is None:
-        raise HTTPException(status_code=404, detail="No such person")
+        raise HTTPException(status_code=404, detail=t("err.no_such_person"))
     if target.role == "owner" or target.matrix_id == user.matrix_id:
-        raise HTTPException(status_code=403, detail="Owners and your own account are changed by the operator")
+        raise HTTPException(status_code=403, detail=t("err.owner_or_self"))
     if not user.can_rollup and (set(target.tenants) - set(user.tenants) or target.can_rollup):
-        raise HTTPException(status_code=403, detail="This person has access outside your tenants")
+        raise HTTPException(status_code=403, detail=t("err.outside_tenants"))
     return target
 
 
@@ -291,11 +324,22 @@ class AddPersonRequest(BaseModel):
     name: str
     tenants: list[str]
     approve: list[str] = []
+    language: str | None = None
 
 
 class UpdatePersonRequest(BaseModel):
     tenants: list[str]
     approve: list[str] = []
+    language: str | None = None
+
+
+def _language_arg(code: str | None) -> str | None:
+    if code is None or code == "":
+        return None
+    lang = i18n.normalize(code)
+    if lang is None:
+        raise HTTPException(status_code=422, detail=t("err.language", languages=", ".join(i18n.SUPPORTED)))
+    return lang
 
 
 @app.get("/api/people")
@@ -309,7 +353,7 @@ def list_people(user: UserScope = Depends(require_people_manager)):
             user.can_rollup or not (set(u.tenants) - set(user.tenants) or u.can_rollup))
         rows.append({"name": u.name, "matrix_id": u.matrix_id, "localpart": u.matrix_id[1:].split(":")[0],
                      "role": u.role, "tenants": list(u.tenants), "approve": list(u.can_approve_artifacts),
-                     "editable": editable})
+                     "language": u.language, "editable": editable})
     return {"people": rows, "tenants": _grantable(user), "approvable": list(user.can_approve_artifacts),
             "server": server}
 
@@ -318,14 +362,14 @@ def list_people(user: UserScope = Depends(require_people_manager)):
 def add_person(body: AddPersonRequest, user: UserScope = Depends(require_people_manager)):
     localpart = body.localpart.strip().lower()
     if not LOCALPART_RE.fullmatch(localpart) or localpart in ("admin", "portal"):
-        raise HTTPException(status_code=422, detail="User name: lowercase letters, digits, . _ = - (no spaces)")
+        raise HTTPException(status_code=422, detail=t("err.localpart_format"))
     if not NAME_RE.fullmatch(body.name.strip()):
-        raise HTTPException(status_code=422, detail="Name: one line, at most 60 characters, no quotes")
+        raise HTTPException(status_code=422, detail=t("err.name_format"))
     if any(u.matrix_id == f"@{localpart}:{_server(user)}" for u in rbac.all()):
-        raise HTTPException(status_code=409, detail="That user name is taken")
+        raise HTTPException(status_code=409, detail=t("err.username_taken"))
     _check_grant(user, body.tenants, body.approve)
     people_log.info("people: %s adds @%s", user.matrix_id, localpart)
-    r = people.add(localpart, body.name.strip(), body.tenants, body.approve)
+    r = people.add(localpart, body.name.strip(), body.tenants, body.approve, _language_arg(body.language))
     if not r.ok:
         raise HTTPException(status_code=502, detail=r.error)
     rbac.reload()
@@ -337,7 +381,7 @@ def update_person(localpart: str, body: UpdatePersonRequest, user: UserScope = D
     _target(user, localpart)
     _check_grant(user, body.tenants, body.approve)
     people_log.info("people: %s sets @%s to %s", user.matrix_id, localpart, ",".join(body.tenants))
-    r = people.update(localpart, body.tenants, body.approve)
+    r = people.update(localpart, body.tenants, body.approve, _language_arg(body.language))
     if not r.ok:
         raise HTTPException(status_code=502, detail=r.error)
     rbac.reload()
@@ -355,6 +399,37 @@ def remove_person(localpart: str, user: UserScope = Depends(require_people_manag
     return {"ok": True}
 
 
+class LanguageRequest(BaseModel):
+    language: str | None = None   # "en", "de" or null = let the browser decide
+
+
+@app.post("/api/profile/language")
+def set_my_language(body: LanguageRequest, user: UserScope = Depends(require_user)):
+    """One's own language. Matrix accounts: through the people hook into
+    team.yaml (users.yaml follows; no rooms or bots touched). Telegram-only
+    accounts live in users.yaml alone and are written there."""
+    lang = _language_arg(body.language)
+    if user.matrix_id:
+        r = people.set_language(user.matrix_id[1:].split(":")[0], lang)
+        if not r.ok:
+            raise HTTPException(status_code=502, detail=r.error)
+    else:
+        try:
+            data = yaml.safe_load(USERS_YAML_PATH.read_text()) or {}
+            target = next((e for e in data.get("users", []) if str(e.get("telegram_user_id")) == str(user.telegram_user_id)), None)
+            if target is None:
+                raise HTTPException(status_code=409, detail=t("err.user_entry_gone"))
+            if lang:
+                target["language"] = lang
+            else:
+                target.pop("language", None)
+            USERS_YAML_PATH.write_text(yaml.safe_dump(data, sort_keys=False))
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=t("err.profile_save", error=str(e)))
+    rbac.reload()
+    return {"ok": True, "language": lang}
+
+
 class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str
@@ -364,9 +439,9 @@ class PasswordChangeRequest(BaseModel):
 def change_password(body: PasswordChangeRequest, user: UserScope = Depends(require_user)):
     """The signed-in person's own Matrix password (see auth/matrix_password.py)."""
     if not user.matrix_id:
-        raise HTTPException(status_code=409, detail="This account has no Matrix login")
+        raise HTTPException(status_code=409, detail=t("err.no_matrix_login"))
     if password_changer is None:
-        raise HTTPException(status_code=503, detail="Password changes are not configured (MATRIX_HOMESERVER)")
+        raise HTTPException(status_code=503, detail=t("err.password_unconfigured"))
     outcome = password_changer.change(user.matrix_id, body.current_password, body.new_password)
     if not outcome.ok:
         raise HTTPException(status_code=outcome.status, detail=outcome.error)
@@ -374,10 +449,10 @@ def change_password(body: PasswordChangeRequest, user: UserScope = Depends(requi
     return {"ok": True}
 
 
-# --- help: docs/user-guide.md, the one guide for business users ---
+# --- help: docs/user-guide.md (English) and user-guide.<lang>.md, the one guide for business users ---
 
 USER_GUIDE = Path(__file__).resolve().parents[1] / "docs" / "user-guide.md"
-HELP_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+HELP_PAGE = """<!doctype html><html lang="{lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Help · Team Portal</title>
 <style>:root{{--bg:#0f1115;--panel:#171a21;--line:#303643;--text:#e7eaf0;--muted:#aab2c0}}
 body{{font:15px/1.55 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--text)}}
@@ -389,18 +464,33 @@ table{{border-collapse:collapse;width:100%;display:block;overflow-x:auto}}
 th,td{{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}}
 .toc{{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 18px}}
 .toc ul{{padding-left:18px}}</style></head>
-<body><header><a href="/">← Team Portal</a></header><main>{body}</main></body></html>"""
+header span{{float:right}}header span a{{margin-left:10px}}</style></head>
+<body><header><a href="/">← Team Portal</a><span>{switch}</span></header><main>{body}</main></body></html>"""
+LANGUAGE_NAMES = {"en": "English", "de": "Deutsch"}
+
+
+def guide_path(lang: str) -> Path:
+    localized = USER_GUIDE.with_name(f"user-guide.{lang}.md")
+    return localized if lang != i18n.DEFAULT and localized.exists() else USER_GUIDE
 
 
 @app.get("/help", response_class=HTMLResponse)
 def help_page(request: Request):
     """Public on purpose: people read it before their first sign-in. It
     holds no data, only how to use the Portal and Matrix; {{HOST}} becomes
-    the server name the reader reached."""
+    the server name the reader reached. The language follows the request
+    (?lang=, cookie, browser); the header switches it."""
     host = html.escape(request.url.hostname or "your-server")
-    body = markdown.markdown(USER_GUIDE.read_text().replace("{{HOST}}", host),
+    lang = i18n.current()
+    body = markdown.markdown(guide_path(lang).read_text().replace("{{HOST}}", host),
                              extensions=["tables", "toc", "fenced_code"])
-    return HTMLResponse(HELP_PAGE.format(body=body), headers={"Cache-Control": "no-store"})
+    switch = " · ".join(f"<b>{name}</b>" if code == lang else f'<a href="/help?lang={code}">{name}</a>'
+                        for code, name in LANGUAGE_NAMES.items() if code in i18n.SUPPORTED)
+    response = HTMLResponse(HELP_PAGE.format(body=body, lang=lang, switch=switch), headers={"Cache-Control": "no-store"})
+    if request.query_params.get("lang"):   # an explicit choice is kept, like the Portal's switcher
+        response.set_cookie(i18n.COOKIE, lang, max_age=i18n.COOKIE_MAX_AGE, samesite="lax",
+                            secure=PORTAL_BASE_URL.startswith("https://"))
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -472,16 +562,16 @@ def dashboard(tenant: str | None = Query(default=None), user: UserScope = Depend
     if tenant is None:
         tenant = readable[0] if readable else None
     if tenant is None or not user.can_read_tenant(tenant):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     tasks = kanban_read.list_tasks(KANBAN_DB_PATH, tenants=[tenant])
     recent = int(__import__("time").time()) - RECENT_DAYS * 86400
     work = {
-        "awaiting_my_approval": [_brief(t) for t in tasks if t.get("status") == "review" and _may_review(user, t, _links(t["id"]))],
-        "in_review": [_brief(t) for t in tasks if t.get("status") == "review"],
-        "blocked": [_brief(t) for t in tasks if t.get("status") == "blocked"],
-        "in_progress": [_brief(t) for t in tasks if t.get("status") == "running"],
-        "recently_done": [_brief(t) for t in tasks if t.get("status") in ("done", "archived")
-                          and (t.get("completed_at") or 0) >= recent][:8],
+        "awaiting_my_approval": [_brief(task) for task in tasks if task.get("status") == "review" and _may_review(user, task, _links(task["id"]))],
+        "in_review": [_brief(task) for task in tasks if task.get("status") == "review"],
+        "blocked": [_brief(task) for task in tasks if task.get("status") == "blocked"],
+        "in_progress": [_brief(task) for task in tasks if task.get("status") == "running"],
+        "recently_done": [_brief(task) for task in tasks if task.get("status") in ("done", "archived")
+                          and (task.get("completed_at") or 0) >= recent][:8],
     }
     out = {
         "available": True, "tenant": tenant, "tenants": readable,
@@ -493,14 +583,14 @@ def dashboard(tenant: str | None = Query(default=None), user: UserScope = Depend
         "serving": team_read.tasks_serving(TEAM_DB_PATH, tenant),
         "sources": team_read.sources(TEAM_DB_PATH, tenant) if user.can_approve_tenant(tenant) else [],
         "lanes": _lane_rows(tenant, tasks, include_archived=user.can_approve_tenant(tenant)),
-        "movable_to": [t for t in readable if t != tenant] if user.can_approve_tenant(tenant) else [],
+        "movable_to": [task for task in readable if task != tenant] if user.can_approve_tenant(tenant) else [],
     }
     if user.can_rollup:
         tiles = []
-        for t in readable:
-            tt = kanban_read.list_tasks(KANBAN_DB_PATH, tenants=[t])
-            tile = team_read.tenant_summary(TEAM_DB_PATH, t)
-            tile["tenant"] = t
+        for task in readable:
+            tt = kanban_read.list_tasks(KANBAN_DB_PATH, tenants=[task])
+            tile = team_read.tenant_summary(TEAM_DB_PATH, task)
+            tile["tenant"] = task
             tile["board"] = {"open": sum(1 for x in tt if x.get("status") not in ("done", "archived")),
                              "blocked": sum(1 for x in tt if x.get("status") == "blocked"),
                              "review": sum(1 for x in tt if x.get("status") == "review")}
@@ -563,20 +653,20 @@ def require_team_owner(user: UserScope, tenant: str | None) -> None:
     """Definitions are the team owner's: for now the people with approval
     rights for the tenant (team.yaml can_approve_artifacts)."""
     if not tenant or not user.can_approve_tenant(tenant):
-        raise HTTPException(status_code=403, detail="Only the team's owners define objectives and KPIs")
+        raise HTTPException(status_code=403, detail=t("err.owners_define"))
 
 
 @app.post("/api/okr/objects")
 def okr_upsert(body: OkrObjectRequest, user: UserScope = Depends(require_user)):
     if body.type not in OKR_TYPES:
-        raise HTTPException(status_code=422, detail="type must be Objective, KeyResult, KPI or Source")
+        raise HTTPException(status_code=422, detail=t("err.okr_type"))
     if body.type == "KeyResult" and not body.id and not body.objective_id:
-        raise HTTPException(status_code=422, detail="a new key result needs objective_id")
+        raise HTTPException(status_code=422, detail=t("err.kr_needs_objective"))
     reject_reserved_markers(*[v for v in body.data.values() if isinstance(v, str)])
     tenant = _okr_tenant(body)
     require_team_owner(user, tenant)
     if "tenant" in body.data and body.data["tenant"] != tenant:
-        raise HTTPException(status_code=403, detail="use 'move to team' to change the team")
+        raise HTTPException(status_code=403, detail=t("err.use_move"))
     result = team_write.upsert(body.type, body.data, actor=user.name, reason=body.reason[:200] or "dashboard",
                                object_id=body.id, objective_id=None if body.id else body.objective_id)
     return _store_result(result)
@@ -600,9 +690,9 @@ def okr_move(object_id: str, body: MoveRequest, user: UserScope = Depends(requir
     source = team_read.tenant_of(TEAM_DB_PATH, object_id)
     require_team_owner(user, source)
     if not user.can_read_tenant(body.tenant):
-        raise HTTPException(status_code=403, detail="You are not a member of that team")
+        raise HTTPException(status_code=403, detail=t("err.not_member_target"))
     if body.tenant == source:
-        raise HTTPException(status_code=422, detail="Already in that team")
+        raise HTTPException(status_code=422, detail=t("err.already_in_team"))
     return _store_result(team_write.move(object_id, body.tenant, actor=user.name, reason=f"moved from {source} to {body.tenant}"))
 
 
@@ -612,7 +702,7 @@ def okr_checkin(body: CheckinRequest, user: UserScope = Depends(require_user)):
     reject_reserved_markers(body.note)
     tenant = team_read.tenant_of(TEAM_DB_PATH, body.target_id)
     if not tenant or not user.can_read_tenant(tenant):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     return _store_result(team_write.checkin(body.target_id, body.value, actor=user.name, reason="check-in", note=body.note[:1000]))
 
 
@@ -651,7 +741,7 @@ class StakeholderRequest(BaseModel):
 def _member(user: UserScope, tenant: str, matrix_id: str) -> UserScope:
     target = rbac.get(matrix_id)
     if target is None or not target.can_read_tenant(tenant):
-        raise HTTPException(status_code=422, detail="Not a member of this team")
+        raise HTTPException(status_code=422, detail=t("err.not_member"))
     return target
 
 
@@ -659,7 +749,7 @@ def _member(user: UserScope, tenant: str, matrix_id: str) -> UserScope:
 def members(tenant: str = Query(...), user: UserScope = Depends(require_user)):
     """People of a team, for the stakeholder picker."""
     if not user.can_read_tenant(tenant):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     rows = [{"name": u.name, "matrix_id": u.matrix_id, "can_approve": u.can_approve_tenant(tenant)}
             for u in rbac.all() if u.matrix_id and u.can_read_tenant(tenant)]
     rows.sort(key=lambda r: r["name"].lower())
@@ -669,7 +759,7 @@ def members(tenant: str = Query(...), user: UserScope = Depends(require_user)):
 @app.get("/api/okr/key-results")
 def key_result_options(tenant: str = Query(...), user: UserScope = Depends(require_user)):
     if not user.can_read_tenant(tenant):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     if not team_read.available(TEAM_DB_PATH):
         return {"key_results": []}
     return {"key_results": team_read.key_results_of_tenant(TEAM_DB_PATH, tenant)}
@@ -679,17 +769,17 @@ def key_result_options(tenant: str = Query(...), user: UserScope = Depends(requi
 def add_stakeholder(task_id: str, body: StakeholderRequest, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
     if task is None or not user.can_read_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     if body.role not in STAKEHOLDER_ROLES:
-        raise HTTPException(status_code=422, detail="role must be owner, reviewer or watcher")
+        raise HTTPException(status_code=422, detail=t("err.stakeholder_role"))
     tenant = task.get("tenant", "")
     target = _member(user, tenant, body.matrix_id)
     if body.role == "reviewer" and not target.can_approve_tenant(tenant):
-        raise HTTPException(status_code=422, detail=f"{target.name} has no approval rights for {tenant}")
+        raise HTTPException(status_code=422, detail=t("err.no_approval_rights", name=target.name, tenant=tenant))
     if body.role in ("owner", "reviewer") and not user.can_approve_tenant(tenant):
-        raise HTTPException(status_code=403, detail="Only people with approval rights name owners and reviewers")
+        raise HTTPException(status_code=403, detail=t("err.name_stakeholders"))
     if body.key_result and team_read.tenant_of(TEAM_DB_PATH, body.key_result) != tenant:
-        raise HTTPException(status_code=422, detail="That key result belongs to another team")
+        raise HTTPException(status_code=422, detail=t("err.kr_other_team"))
     result = team_write.upsert("TaskLink", {"task_id": task_id, "person": target.name, "matrix_id": target.matrix_id, "role": body.role},
                                actor=user.name, reason=f"stakeholder on {task_id}")
     if not result.ok:
@@ -705,20 +795,20 @@ def add_stakeholder(task_id: str, body: StakeholderRequest, user: UserScope = De
 def remove_stakeholder(task_id: str, link_id: str, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
     if task is None or not user.can_read_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     link = next((l for l in _links(task_id) if l["id"] == link_id), None)
     if link is None:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(status_code=404, detail=t("err.not_found"))
     own = link.get("matrix_id") == user.matrix_id
     if not own and not user.can_approve_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Only people with approval rights remove others")
+        raise HTTPException(status_code=403, detail=t("err.remove_others"))
     return _store_result(team_write.delete(link_id, actor=user.name, reason=f"stakeholder removed from {task_id}"))
 
 
 @app.get("/api/lanes")
 def lane_options(tenant: str = Query(...), user: UserScope = Depends(require_user)):
     if not user.can_read_tenant(tenant):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     if not team_read.available(TEAM_DB_PATH):
         return {"lanes": []}
     return {"lanes": [{"id": l["id"], "name": l.get("name"), "color": l.get("color")} for l in team_read.swimlanes(TEAM_DB_PATH, tenant)]}
@@ -732,7 +822,7 @@ def _set_lane(task_id: str, tenant: str, lane_id: str | None, user: UserScope) -
     """One TaskLane per card: update it, create it, or delete it for null.
     The lane must be one of the card's team."""
     if lane_id and not any(l["id"] == lane_id for l in team_read.swimlanes(TEAM_DB_PATH, tenant)):
-        raise HTTPException(status_code=422, detail="That lane is not one of this team's")
+        raise HTTPException(status_code=422, detail=t("err.lane_other_team"))
     current = team_read.task_lanes(TEAM_DB_PATH).get(task_id)
     if lane_id is None:
         if current is None:
@@ -747,9 +837,9 @@ def set_task_lane(task_id: str, body: LaneRequest, user: UserScope = Depends(req
     """Any member of the card's team puts it in one of the team's lanes."""
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
     if task is None or not user.can_read_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     if not team_read.available(TEAM_DB_PATH):
-        raise HTTPException(status_code=503, detail="The team records are not set up on this instance")
+        raise HTTPException(status_code=503, detail=t("err.records_unset"))
     return _set_lane(task_id, task.get("tenant", ""), body.lane, user) or {"ok": True}
 
 
@@ -757,9 +847,9 @@ def set_task_lane(task_id: str, body: LaneRequest, user: UserScope = Depends(req
 def task_detail(task_id: str, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(status_code=404, detail=t("err.not_found"))
     if not user.can_read_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     task["comments"] = kanban_read.list_comments(KANBAN_DB_PATH, task_id)
     task["attachments"] = kanban_read.list_attachments(KANBAN_DB_PATH, task_id)
     links = _links(task_id)
@@ -821,14 +911,14 @@ def list_assignees(user: UserScope = Depends(require_user)):
 async def upload_task_attachment(task_id: str, file: UploadFile = File(...), user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail=t("err.task_not_found"))
     if not user.can_read_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     data = await file.read(25 * 1024 * 1024 + 1)
     if len(data) > 25 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Attachment exceeds the 25 MB limit")
+        raise HTTPException(status_code=413, detail=t("err.attachment_too_big"))
     if not data:
-        raise HTTPException(status_code=400, detail="Empty files cannot be attached")
+        raise HTTPException(status_code=400, detail=t("err.attachment_empty"))
     result = kanban_write.upload_attachment(
         HERMES_BIN, task_id, file.filename or "upload", data, file.content_type, author=user.name
     )
@@ -846,18 +936,18 @@ def download_task_attachment(
 ):
     attachment = kanban_read.get_attachment(KANBAN_DB_PATH, attachment_id)
     if attachment is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
+        raise HTTPException(status_code=404, detail=t("err.attachment_not_found"))
     task = kanban_read.get_task(KANBAN_DB_PATH, attachment["task_id"])
     if task is None or not user.can_read_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=404, detail="Attachment not found")
+        raise HTTPException(status_code=404, detail=t("err.attachment_not_found"))
     name = Path(attachment["stored_path"]).name
     candidate = (KANBAN_ATTACHMENTS_ROOT / attachment["task_id"] / name).resolve()
     try:
         candidate.relative_to(KANBAN_ATTACHMENTS_ROOT.resolve())
     except ValueError:
-        raise HTTPException(status_code=404, detail="Attachment unavailable")
+        raise HTTPException(status_code=404, detail=t("err.attachment_unavailable"))
     if not candidate.is_file():
-        raise HTTPException(status_code=404, detail="Attachment file is not mounted in the portal")
+        raise HTTPException(status_code=404, detail=t("err.attachment_unmounted"))
     content_type = attachment.get("content_type") or "application/octet-stream"
     # Inline only for types a browser cannot run as a page from the Portal's
     # origin (an uploaded .html or .svg would otherwise be stored XSS); text
@@ -879,8 +969,8 @@ class CommentRequest(BaseModel):
 
 def reject_reserved_markers(*texts: str | None) -> None:
     """SLA-DEADLINE markers are written only by publish-for-review."""
-    if any(t and SLA_DEADLINE_RE.search(t) for t in texts):
-        raise HTTPException(status_code=422, detail="SLA-DEADLINE markers are set by 'Publish for review', not by hand")
+    if any(task and SLA_DEADLINE_RE.search(task) for task in texts):
+        raise HTTPException(status_code=422, detail=t("err.sla_marker"))
 
 
 def check_assignee(assignee: str | None, allow_none: bool = False) -> None:
@@ -891,7 +981,7 @@ def check_assignee(assignee: str | None, allow_none: bool = False) -> None:
     if allow_none and assignee == "none":
         return
     if assignee not in kanban_write.list_assignees():
-        raise HTTPException(status_code=422, detail=f"Unknown assignee {assignee!r}")
+        raise HTTPException(status_code=422, detail=t("err.unknown_assignee", assignee=repr(assignee)))
 
 
 def ok_result(result) -> dict:
@@ -907,7 +997,7 @@ def ok_result(result) -> dict:
 def add_comment(task_id: str, body: CommentRequest, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
     if task is None or not user.can_read_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     reject_reserved_markers(body.text)
     result = kanban_write.comment_task(HERMES_BIN, task_id, body.text, author=user.name)
     if not result.ok:
@@ -931,18 +1021,18 @@ class CreateTaskRequest(BaseModel):
 @app.post("/api/tasks")
 def create_task(body: CreateTaskRequest, user: UserScope = Depends(require_user)):
     if not user.can_read_tenant(body.tenant):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     allowed_statuses = {"triage", "todo", "ready", "running", "review", "blocked", "done", "archived"}
     if body.status not in allowed_statuses:
-        raise HTTPException(status_code=422, detail="Unsupported initial status")
+        raise HTTPException(status_code=422, detail=t("err.initial_status"))
     if body.status in {"done", "archived"} and not user.can_approve_tenant(body.tenant):
-        raise HTTPException(status_code=403, detail="Review permission is required for this initial status")
+        raise HTTPException(status_code=403, detail=t("err.initial_status_review"))
     reject_reserved_markers(body.title, body.body)
     check_assignee(body.assignee)
     if body.key_result and team_read.available(TEAM_DB_PATH) and team_read.tenant_of(TEAM_DB_PATH, body.key_result) != body.tenant:
-        raise HTTPException(status_code=422, detail="That key result belongs to another team")
+        raise HTTPException(status_code=422, detail=t("err.kr_other_team"))
     if body.lane and team_read.available(TEAM_DB_PATH) and not any(l["id"] == body.lane for l in team_read.swimlanes(TEAM_DB_PATH, body.tenant)):
-        raise HTTPException(status_code=422, detail="That lane is not one of this team's")
+        raise HTTPException(status_code=422, detail=t("err.lane_other_team"))
     result = kanban_write.create_task(HERMES_BIN, body.title, body.tenant, body.body,
                                       body.assignee, body.status, body.priority)
     if not result.ok:
@@ -982,11 +1072,11 @@ class EditTaskRequest(BaseModel):
 def edit_task(task_id: str, body: EditTaskRequest, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(status_code=404, detail=t("err.not_found"))
     if not user.can_read_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     if body.title is None and body.body is None and body.priority is None and body.assignee is None:
-        raise HTTPException(status_code=422, detail="At least one editable field is required")
+        raise HTTPException(status_code=422, detail=t("err.no_fields"))
     reject_reserved_markers(body.title, body.body)
     check_assignee(body.assignee, allow_none=True)
     if body.title is not None or body.body is not None or body.priority is not None:
@@ -1009,17 +1099,17 @@ class TransitionTaskRequest(BaseModel):
 def transition_task(task_id: str, body: TransitionTaskRequest, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(status_code=404, detail=t("err.not_found"))
     allowed_statuses = {"todo", "ready", "running", "review", "blocked", "done", "archived"}
     if body.status not in allowed_statuses:
-        raise HTTPException(status_code=422, detail=f"Unsupported board transition: {body.status}")
+        raise HTTPException(status_code=422, detail=t("err.transition", status=body.status))
     if not user.can_read_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     if body.status == "done" and not user.can_approve_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Only an artifact reviewer can complete this task")
+        raise HTTPException(status_code=403, detail=t("err.reviewer_complete"))
     if (task.get("status") == "review" or body.status == "archived") and not user.can_approve_tenant(task.get("tenant", "")):
         # Moving a card out of Review rejects it; archiving removes it from view.
-        raise HTTPException(status_code=403, detail="Only an artifact reviewer can move a card out of Review or archive it")
+        raise HTTPException(status_code=403, detail=t("err.reviewer_move"))
     result = kanban_write.transition_task(
         HERMES_BIN, task_id, body.status, body.reason, task.get("status"), author=user.name
     )
@@ -1032,11 +1122,11 @@ def transition_task(task_id: str, body: TransitionTaskRequest, user: UserScope =
 def claim_task(task_id: str, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail=t("err.task_not_found"))
     if not user.can_read_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     if task.get("status") != "ready":
-        raise HTTPException(status_code=409, detail=f"Only Ready tasks can be claimed; this task is {task.get('status')}. Move it to Ready first.")
+        raise HTTPException(status_code=409, detail=t("err.claim_not_ready", status=task.get("status")))
     result = kanban_write.claim_task(HERMES_BIN, task_id)
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.stderr[:500])
@@ -1095,10 +1185,10 @@ class PublishArtifactRequest(BaseModel):
 def publish_artifact(body: PublishArtifactRequest, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, body.task_id)
     if task is None or not user.can_read_tenant(task.get("tenant", "")):
-        raise HTTPException(status_code=403, detail="Not in your scope")
+        raise HTTPException(status_code=403, detail=t("err.not_in_scope"))
     hours = body.sla_hours if body.sla_hours is not None else config_loader.default_sla_hours()
     if not config_loader.min_sla_hours() <= hours <= 24 * 30:
-        raise HTTPException(status_code=422, detail=f"sla_hours must be between {config_loader.min_sla_hours():g} and 720")
+        raise HTTPException(status_code=422, detail=t("err.sla_hours", min=f"{config_loader.min_sla_hours():g}"))
     marker = make_deadline_marker(hours)
     kanban_write.comment_task(HERMES_BIN, body.task_id, marker, author=user.name)
     result = kanban_write.publish_artifact_for_review(HERMES_BIN, body.task_id, body.summary)
@@ -1117,12 +1207,12 @@ class ReviewDecisionRequest(BaseModel):
 def review_artifact(body: ReviewDecisionRequest, user: UserScope = Depends(require_user)):
     task = kanban_read.get_task(KANBAN_DB_PATH, body.task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(status_code=404, detail=t("err.not_found"))
     tenant = task.get("tenant", "")
     if not user.can_approve_tenant(tenant):
-        raise HTTPException(status_code=403, detail="Not authorized to review this tenant's artifacts")
+        raise HTTPException(status_code=403, detail=t("err.review_tenant"))
     if not _may_review(user, task, _links(body.task_id)):
-        raise HTTPException(status_code=403, detail="This card names its reviewers; you are not one of them")
+        raise HTTPException(status_code=403, detail=t("err.not_named_reviewer"))
     if body.approve:
         result = kanban_write.approve_artifact(HERMES_BIN, body.task_id, body.note, author=user.name)
     else:

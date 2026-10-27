@@ -30,7 +30,7 @@ def test_add_returns_the_initial_password_once(hook):
     r = client_as("@own:hs.test").post("/api/people", json={"localpart": "Ana", "name": "Ana Example",
                                                              "tenants": ["tech"], "approve": []})
     assert r.status_code == 200 and r.json()["initial_password"] == "pw-1"
-    assert hook == [("add", "ana", "Ana Example", ["tech"], [])]
+    assert hook == [("add", "ana", "Ana Example", ["tech"], [], None)]
 
 
 def test_members_without_the_right_get_nothing(hook):
@@ -65,7 +65,7 @@ def test_a_limited_manager_changes_only_people_inside_their_reach(hook):
     assert lead.delete("/api/people/own").status_code == 403                               # owner
     assert lead.delete("/api/people/lead").status_code == 403                              # self
     assert lead.delete("/api/people/nobody").status_code == 404
-    assert hook == [("update", "tim", ["tech", "sales"], ["tech"])]
+    assert hook == [("update", "tim", ["tech", "sales"], ["tech"], None)]
 
 
 def test_bridge_errors_reach_the_page(hook, monkeypatch):

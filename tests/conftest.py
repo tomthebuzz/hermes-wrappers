@@ -44,6 +44,7 @@ users:
     tenants: [ops]
     can_rollup: false
     can_approve_artifacts: [ops]
+    language: de
   - matrix_id: "@own:hs.test"
     name: "Owen Owner"
     role: owner
